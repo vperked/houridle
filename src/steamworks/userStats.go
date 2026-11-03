@@ -1,0 +1,154 @@
+//go:build windows
+
+package steamworks
+
+import (
+	"errors"
+	"runtime"
+	"time"
+	"unsafe"
+)
+
+// Accessor names for ISteamUserStats across SDK versions, newest first.
+var userStatsAccessors = []string{
+	"SteamAPI_SteamUserStats_v013",
+	"SteamAPI_SteamUserStats_v012",
+	"SteamAPI_SteamUserStats_v011",
+}
+
+// Achievement is one of a game's achievements as Steam reports it for you.
+type Achievement struct {
+	ID          string `json:"id"` // API name, e.g. "ACH_WIN_ONE_GAME"
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Hidden      bool   `json:"hidden"`
+	Unlocked    bool   `json:"unlocked"`
+}
+
+// UserStats wraps the ISteamUserStats interface.
+type UserStats struct {
+	api  *API
+	self uintptr
+}
+
+// UserStats returns the stats interface for the current app.
+func (a *API) UserStats() (*UserStats, error) {
+	for _, name := range userStatsAccessors {
+		if p, err := a.dll.FindProc(name); err == nil {
+			if self, _, _ := p.Call(); self != 0 {
+				return &UserStats{api: a, self: self}, nil
+			}
+		}
+	}
+	return nil, &Error{CodeLoad, "this steam_api64.dll has no ISteamUserStats interface houridle recognizes"}
+}
+
+// call invokes SteamAPI_ISteamUserStats_<method>(self, args...).
+func (s *UserStats) call(method string, args ...uintptr) (uintptr, error) {
+	p, err := s.api.proc("SteamAPI_ISteamUserStats_" + method)
+	if err != nil {
+		return 0, err
+	}
+	r, _, _ := p.Call(append([]uintptr{s.self}, args...)...)
+	return r, nil
+}
+
+// Load waits for Steam to deliver your stats, which newer SDKs request
+// automatically at init (older ones need RequestCurrentStats). It returns the
+// number of achievements; 0 after the timeout means the game has none.
+func (s *UserStats) Load(timeout time.Duration) (int, error) {
+	if p, err := s.api.dll.FindProc("SteamAPI_ISteamUserStats_RequestCurrentStats"); err == nil {
+		p.Call(s.self)
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		s.api.RunCallbacks()
+		n, err := s.call("GetNumAchievements")
+		if err != nil {
+			return 0, err
+		}
+		if uint32(n) > 0 || time.Now().After(deadline) {
+			return int(uint32(n)), nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Achievements lists every achievement with its display text and your state.
+func (s *UserStats) Achievements(count int) ([]Achievement, error) {
+	out := make([]Achievement, 0, count)
+	for i := range count {
+		r, err := s.call("GetAchievementName", uintptr(i))
+		if err != nil {
+			return nil, err
+		}
+		id := cString(r)
+		if id == "" {
+			continue
+		}
+		a := Achievement{
+			ID:          id,
+			Name:        s.attribute(id, "name"),
+			Description: s.attribute(id, "desc"),
+			Hidden:      s.attribute(id, "hidden") == "1",
+		}
+		if a.Name == "" {
+			a.Name = id
+		}
+		idPtr, achieved := cBytes(id), new(byte)
+		r, err = s.call("GetAchievement", uintptr(unsafe.Pointer(idPtr)), uintptr(unsafe.Pointer(achieved)))
+		runtime.KeepAlive(idPtr)
+		runtime.KeepAlive(achieved)
+		if err == nil && boolResult(r) {
+			a.Unlocked = *achieved != 0
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (s *UserStats) attribute(id, key string) string {
+	idPtr, keyPtr := cBytes(id), cBytes(key)
+	r, err := s.call("GetAchievementDisplayAttribute", uintptr(unsafe.Pointer(idPtr)), uintptr(unsafe.Pointer(keyPtr)))
+	runtime.KeepAlive(idPtr)
+	runtime.KeepAlive(keyPtr)
+	if err != nil {
+		return ""
+	}
+	return cString(r)
+}
+
+// SetUnlocked unlocks or locks one achievement locally. Call Store to save.
+func (s *UserStats) SetUnlocked(id string, unlocked bool) error {
+	method := "ClearAchievement"
+	if unlocked {
+		method = "SetAchievement"
+	}
+	idPtr := cBytes(id)
+	r, err := s.call(method, uintptr(unsafe.Pointer(idPtr)))
+	runtime.KeepAlive(idPtr)
+	if err != nil {
+		return err
+	}
+	if !boolResult(r) {
+		return errors.New("rejected by Steam (the game may protect this achievement)")
+	}
+	return nil
+}
+
+// Store saves changes to Steam and pumps callbacks briefly so the upload
+// finishes before the process exits.
+func (s *UserStats) Store() error {
+	r, err := s.call("StoreStats")
+	if err != nil {
+		return err
+	}
+	if !boolResult(r) {
+		return errors.New("couldn't save the changes to Steam")
+	}
+	for range 20 {
+		s.api.RunCallbacks()
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
+}

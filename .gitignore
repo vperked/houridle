@@ -1,0 +1,27 @@
+# Build output
+*.exe
+*.exe~
+*.test
+*.out
+/dist/
+
+# Local, per-user files houridle creates next to the exe (or in src/ under `go run`)
+config.json
+steam_api64.dll
+
+# Go tooling
+coverage.*
+*.prof
+go.work
+go.work.sum
+
+# Logs
+*.log
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store

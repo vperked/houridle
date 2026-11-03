@@ -1,0 +1,6 @@
+# Keep Go source with LF line endings on every OS (gofmt's format).
+*.go     text eol=lf
+go.mod   text eol=lf
+go.sum   text eol=lf
+*.md     text
+*.bat    text eol=crlf

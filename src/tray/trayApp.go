@@ -1,0 +1,157 @@
+//go:build windows
+
+// Package tray shows houridle as an icon in the notification area while it
+// idles, with a menu listing each game's status.
+package tray
+
+import (
+	"fmt"
+	"time"
+
+	"fyne.io/systray"
+
+	"houridle/src/idler"
+)
+
+// Choice is what the user picked from the tray menu.
+type Choice int
+
+const (
+	ChoiceStop Choice = iota
+	ChoiceOpenDashboard
+)
+
+const (
+	refreshEvery  = time.Second
+	maxTooltipLen = 127 // Windows' limit for tray tooltips
+)
+
+// ViewSource supplies the per-game status the menu shows.
+type ViewSource interface {
+	Views() []idler.View
+}
+
+// Run shows the tray icon and blocks until the user picks Open dashboard or
+// Stop idling, or stop is closed (e.g. on logoff).
+func Run(src ViewSource, start time.Time, stop <-chan struct{}) Choice {
+	choice := make(chan Choice, 1) // filled before systray.Quit, so it's ready when Run returns
+	onReady := func() {
+		systray.SetIcon(Icon())
+		m := buildMenu(len(src.Views()))
+		go func() {
+			choice <- m.waitForChoice(src, start, stop)
+			systray.Quit()
+		}()
+	}
+	systray.Run(onReady, func() {})
+
+	select {
+	case c := <-choice:
+		return c
+	default:
+		return ChoiceStop // the tray closed without a choice
+	}
+}
+
+// menu is the tray's right-click menu.
+type menu struct {
+	header *systray.MenuItem   // "houridle · 2/3 idling · 01:02:03"
+	games  []*systray.MenuItem // one status line per game
+	open   *systray.MenuItem
+	quit   *systray.MenuItem
+
+	titles  map[*systray.MenuItem]string // what each item shows now, to skip unchanged updates
+	tooltip string
+}
+
+func buildMenu(gameCount int) *menu {
+	m := &menu{titles: map[*systray.MenuItem]string{}}
+	m.header = systray.AddMenuItem("houridle", "")
+	m.header.Disable()
+	for range gameCount {
+		item := systray.AddMenuItem("", "")
+		item.Disable() // status lines aren't clickable
+		m.games = append(m.games, item)
+	}
+	systray.AddSeparator()
+	m.open = systray.AddMenuItem("Open dashboard", "Show houridle in a console window")
+	m.quit = systray.AddMenuItem("Stop idling", "Stop every game and close houridle")
+	return m
+}
+
+// waitForChoice keeps the menu up to date until the user picks an action.
+func (m *menu) waitForChoice(src ViewSource, start time.Time, stop <-chan struct{}) Choice {
+	ticker := time.NewTicker(refreshEvery)
+	defer ticker.Stop()
+	for {
+		m.refresh(src.Views(), time.Since(start))
+		select {
+		case <-m.open.ClickedCh:
+			return ChoiceOpenDashboard
+		case <-m.quit.ClickedCh:
+			return ChoiceStop
+		case <-stop:
+			return ChoiceStop
+		case <-ticker.C:
+		}
+	}
+}
+
+// refresh updates the header, game lines and tooltip.
+func (m *menu) refresh(views []idler.View, session time.Duration) {
+	idling := 0
+	for _, v := range views {
+		if v.State == idler.StateIdling {
+			idling++
+		}
+	}
+	summary := fmt.Sprintf("%d/%d idling · %s", idling, len(views), clock(session))
+
+	m.setTitle(m.header, "houridle · "+summary)
+	for i, v := range views {
+		if i < len(m.games) {
+			m.setTitle(m.games[i], gameLine(v))
+		}
+	}
+	if tip := "houridle\n" + summary; tip != m.tooltip {
+		m.tooltip = tip
+		systray.SetTooltip(clip(tip, maxTooltipLen))
+	}
+}
+
+func (m *menu) setTitle(item *systray.MenuItem, title string) {
+	if m.titles[item] != title {
+		m.titles[item] = title
+		item.SetTitle(title)
+	}
+}
+
+// gameLine is one game's menu line, e.g. "●  Rust    01:02:03".
+func gameLine(v idler.View) string {
+	name := clip(v.Game.Name, 40)
+	switch v.State {
+	case idler.StateIdling:
+		return "●  " + name + "    " + clock(v.Idled)
+	case idler.StateStarting:
+		return "○  " + name + "    starting…"
+	case idler.StateWaiting:
+		return "○  " + name + "    waiting for Steam"
+	case idler.StateFailing:
+		return "✕  " + name + "    " + v.Note
+	default:
+		return "○  " + name + "    stopped"
+	}
+}
+
+func clock(d time.Duration) string {
+	s := int(d.Seconds())
+	return fmt.Sprintf("%02d:%02d:%02d", s/3600, (s%3600)/60, s%60)
+}
+
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
