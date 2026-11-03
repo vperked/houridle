@@ -14,7 +14,7 @@ import (
 // Errors the commands turn into advice.
 var (
 	ErrNotLoggedIn    = errors.New("not signed in: run houridle login")
-	ErrSessionExpired = errors.New("the saved Steam sign-in has expired or was revoked: run houridle login")
+	ErrSessionExpired = errors.New("Steam no longer accepts the saved sign-in (it expired, was revoked, or Steam wants it verified again): run houridle login")
 	ErrCorrupt        = errors.New("the saved sign-in is damaged or doesn't match its account: run houridle login")
 )
 

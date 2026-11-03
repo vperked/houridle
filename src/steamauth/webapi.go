@@ -63,6 +63,8 @@ func EResultText(code int) string {
 		return "Steam is rate limiting sign-ins from this network or account; wait a while and try again"
 	case EResultAccessDenied:
 		return "Steam denied access"
+	case 63, 85:
+		return "Steam wants extra verification (Steam Guard) before it lets this computer sign in"
 	case EResultExpired:
 		return "the sign-in expired"
 	case EResultTimeout:

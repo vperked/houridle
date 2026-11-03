@@ -474,3 +474,37 @@ func TestMenuChoice(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshTreatsEveryRefusalAsSignInAgainExceptBusySteam(t *testing.T) {
+	for _, code := range []int{5, 8, 15, 26, 27, 63, 65, 85, 88} {
+		api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: code} })
+		mgr := managerWith(t, api, aliceSession())
+		if _, err := mgr.Refresh(context.Background()); !errors.Is(err, steamauth.ErrSessionExpired) {
+			t.Errorf("Steam error %d should mean sign in again, got %v", code, err)
+		}
+	}
+	for _, code := range []int{2, 3, 16, 20, 84, 87} {
+		api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: code} })
+		mgr := managerWith(t, api, aliceSession())
+		_, err := mgr.Refresh(context.Background())
+		if errors.Is(err, steamauth.ErrSessionExpired) || err == nil {
+			t.Errorf("Steam error %d is Steam being busy, not a rejected sign-in; got %v", code, err)
+		}
+	}
+}
+
+func TestRefreshSurvivesSteamRefusingOnlyTheRenewal(t *testing.T) {
+	api := newFakeAPI(t, func(c apiCall) apiReply {
+		if c.Req.Uint(3) != 0 { // asked to renew
+			return apiReply{EResult: 63}
+		}
+		return apiReply{Body: new(steamauth.Encoder).String(1, "access").Out()}
+	})
+	mgr := managerWith(t, api, aliceSession())
+	if _, err := mgr.Refresh(context.Background()); err != nil {
+		t.Fatalf("the token is fine without renewal: %v", err)
+	}
+	if n := len(api.called("GenerateAccessTokenForApp")); n != 2 {
+		t.Errorf("expected a renewal try and a plain try, got %d calls", n)
+	}
+}

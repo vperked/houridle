@@ -43,18 +43,24 @@ func (m *Manager) Current() (Session, error) {
 	return sess, nil
 }
 
-// rejects are the answers that mean the token itself is no good (as opposed
-// to Steam being busy): invalid, denied, revoked or expired.
+// transient are the answers that mean Steam is busy or hiccuping, so the
+// saved sign-in may well still be good and trying again later makes sense.
+var transient = map[int]bool{
+	EResultFail:          true, // Steam's generic "something went wrong"
+	3:                    true, // no connection
+	EResultTimeout:       true,
+	EResultUnavailable:   true,
+	EResultRateLimited:   true,
+	EResultLoginThrottle: true,
+}
+
+// rejected reports whether Steam answered that the token itself is no good
+// (denied, revoked, expired, needs a fresh sign-in, ...). Any answer that
+// isn't a "try again later" one counts, because the cure is the same: sign in
+// again, rather than showing the person a bare Steam error code.
 func rejected(err error) bool {
 	var se *Error
-	if !errors.As(err, &se) {
-		return false
-	}
-	switch se.EResult {
-	case EResultInvalidPassword, 8, EResultAccessDenied, 26, EResultExpired:
-		return true
-	}
-	return false
+	return errors.As(err, &se) && !transient[se.EResult]
 }
 
 // Refresh asks Steam whether the saved session still works, and keeps the
@@ -68,6 +74,11 @@ func (m *Manager) Refresh(ctx context.Context) (Session, error) {
 		return sess, err
 	}
 	_, renewed, err := m.Client.AccessToken(ctx, sess.RefreshToken, sess.SteamID, true)
+	if err != nil && rejected(err) {
+		// Steam can refuse the optional renewal while still honouring the
+		// token itself. Check the token on its own before giving up on it.
+		_, renewed, err = m.Client.AccessToken(ctx, sess.RefreshToken, sess.SteamID, false)
+	}
 	if err != nil {
 		if rejected(err) {
 			return sess, ErrSessionExpired
