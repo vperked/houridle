@@ -1,0 +1,15 @@
+# houridle itself, idling the games saved by "houridle -setup".
+# It waits for Steam to sign in by itself, so starting early is fine.
+[Unit]
+Description=houridle: Steam hour idler
+Wants=houridle-steam.service
+After=houridle-steam.service
+
+[Service]
+WorkingDirectory=%h/houridle
+ExecStart=%h/houridle/houridle -stop never
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

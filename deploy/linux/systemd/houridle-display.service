@@ -1,0 +1,11 @@
+# A virtual screen for Steam, which needs one even on a server.
+[Unit]
+Description=houridle: virtual display for Steam
+
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x800x24 -nolisten tcp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

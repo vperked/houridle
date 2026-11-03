@@ -1,7 +1,5 @@
 //go:build windows
 
-// Package tray shows houridle as an icon in the notification area while it
-// idles, with a menu listing each game's status.
 package tray
 
 import (
@@ -11,14 +9,7 @@ import (
 	"fyne.io/systray"
 
 	"houridle/src/idler"
-)
-
-// Choice is what the user picked from the tray menu.
-type Choice int
-
-const (
-	ChoiceStop Choice = iota
-	ChoiceOpenDashboard
+	"houridle/src/stoptime"
 )
 
 const (
@@ -26,18 +17,15 @@ const (
 	maxTooltipLen = 127 // Windows' limit for tray tooltips
 )
 
-// ViewSource supplies the per-game status the menu shows.
-type ViewSource interface {
-	Views() []idler.View
-}
-
 // Run shows the tray icon and blocks until the user picks Open dashboard or
-// Stop idling, or stop is closed (e.g. on logoff).
-func Run(src ViewSource, start time.Time, stop <-chan struct{}) Choice {
+// Stop idling, or stop is closed (e.g. on logoff or at the stop time).
+// stopAt is shown in the menu when set.
+func Run(src ViewSource, start, stopAt time.Time, stop <-chan struct{}) Choice {
 	choice := make(chan Choice, 1) // filled before systray.Quit, so it's ready when Run returns
 	onReady := func() {
 		systray.SetIcon(Icon())
 		m := buildMenu(len(src.Views()))
+		m.stopAt = stopAt
 		go func() {
 			choice <- m.waitForChoice(src, start, stop)
 			systray.Quit()
@@ -62,6 +50,7 @@ type menu struct {
 
 	titles  map[*systray.MenuItem]string // what each item shows now, to skip unchanged updates
 	tooltip string
+	stopAt  time.Time // automatic stop; zero for none
 }
 
 func buildMenu(gameCount int) *menu {
@@ -106,6 +95,9 @@ func (m *menu) refresh(views []idler.View, session time.Duration) {
 		}
 	}
 	summary := fmt.Sprintf("%d/%d idling · %s", idling, len(views), clock(session))
+	if !m.stopAt.IsZero() {
+		summary += " · stops " + stoptime.Describe(m.stopAt, time.Now())
+	}
 
 	m.setTitle(m.header, "houridle · "+summary)
 	for i, v := range views {

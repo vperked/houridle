@@ -1,17 +1,23 @@
-//go:build windows
+//go:build windows || linux
 
 package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"houridle/src/eventlog"
 	"houridle/src/handover"
 	"houridle/src/idler"
 	"houridle/src/steam"
+	"houridle/src/steamauth"
+	"houridle/src/stoptime"
 	"houridle/src/tray"
 	"houridle/src/ui"
 )
@@ -23,23 +29,50 @@ type idleRun struct {
 	appIDs  []uint32
 	games   []*steam.Game
 	exePath string
-	dllPath string
+	libPath string
 	lock    *handover.Lock
+	log     *eventlog.Log      // houridle.log; nil if it couldn't be opened
+	stopAt  time.Time          // automatic stop; zero for none
+	session *steamauth.Manager // set when idling through a saved sign-in (houridle start)
 }
 
-// stopContext is cancelled on Ctrl+C, console close or logoff, or by cancel.
-func stopContext() (context.Context, context.CancelFunc) {
+// stopContext is cancelled on Ctrl+C, console close, logoff or a service
+// stop (SIGTERM), at the automatic stop time, or by calling cancel.
+func (r *idleRun) stopContext() (context.Context, context.CancelFunc) {
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(sigCtx)
+	if !r.stopAt.IsZero() {
+		ctx, cancel = context.WithDeadline(sigCtx, r.stopAt)
+	}
 	return ctx, func() {
 		cancel()
 		stopSignals()
 	}
 }
 
-// newSupervisor creates the helpers' supervisor and warns early if Steam is down.
-func (r *idleRun) newSupervisor(onEvent func(idler.Event)) *idler.Supervisor {
-	sup := idler.New(r.games, r.exePath, r.dllPath, onEvent)
+// reachedStopTime reports whether ctx ended because the stop time came.
+func reachedStopTime(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// noteStopTime logs and announces that idling ended at the planned time.
+func (r *idleRun) noteStopTime() {
+	r.log.Printf("info   reached the stop time (%s)", stoptime.Describe(r.stopAt, time.Now()))
+	ui.Notice("reached your stop time, " + stoptime.Describe(r.stopAt, time.Now()))
+}
+
+// newSupervisor creates the supervisor. Every event also goes to the log.
+// Through the Steam client it warns early if Steam isn't running; with a
+// saved sign-in it connects to Steam itself instead.
+func (r *idleRun) newSupervisor(show func(idler.Event)) idler.Runner {
+	onEvent := func(e idler.Event) {
+		r.log.Printf("%-5s  %s", levelWord(e.Level), e.Text)
+		show(e)
+	}
+	if r.session != nil {
+		return idler.NewSession(r.games, r.session, onEvent)
+	}
+	sup := idler.New(r.games, r.exePath, r.libPath, onEvent)
 	if !steam.Running() {
 		onEvent(idler.Event{At: time.Now(), Level: idler.EventWarn, Text: "Steam isn't running. Start it and sign in; idling begins once it's up."})
 	}
@@ -47,9 +80,9 @@ func (r *idleRun) newSupervisor(onEvent func(idler.Event)) *idler.Supervisor {
 }
 
 // inConsole idles with the live dashboard until the user stops or sends it
-// to the tray. Redirected output gets plain log lines instead.
+// to the tray. Redirected output (a service, a pipe) gets plain lines instead.
 func (r *idleRun) inConsole() {
-	ctx, cancel := stopContext()
+	ctx, cancel := r.stopContext()
 	defer cancel()
 	start := time.Now()
 	if !ui.Styled() {
@@ -57,8 +90,10 @@ func (r *idleRun) inConsole() {
 		return
 	}
 
-	dash := ui.NewDashboard(start, version)
+	dash := ui.NewDashboard(start, version, handover.TraySupported)
+	dash.SetStopTime(r.stopAt)
 	sup := r.newSupervisor(dash.AddEvent)
+	r.logStart("in the console")
 	dash.Open(sup)
 	sup.Start(ctx)
 
@@ -67,55 +102,109 @@ func (r *idleRun) inConsole() {
 	case <-ctx.Done():
 	case action = <-dash.Actions():
 	}
+	timeUp := reachedStopTime(ctx)
 	cancel()
 	dash.SetStopping()
 	sup.Wait()
 	dash.Close()
 
 	if action == ui.ActionTray {
+		r.log.Printf("info   moving to the tray")
 		r.lock.Release()
 		r.handOffToTray()
 		return
 	}
+	if timeUp {
+		r.noteStopTime()
+	}
+	r.logStop(sup.Views(), time.Since(start))
 	ui.PrintSummary(sup.Views(), time.Since(start))
 }
 
 func (r *idleRun) inPlainConsole(ctx context.Context, start time.Time) {
 	sup := r.newSupervisor(ui.PrintEvent)
+	r.logStart("without a dashboard")
 	ui.PrintIdleHeader(r.games)
+	if !r.stopAt.IsZero() {
+		ui.Logf("will stop at %s", stoptime.Describe(r.stopAt, time.Now()))
+	}
 	sup.Start(ctx)
 	<-ctx.Done()
+	if reachedStopTime(ctx) {
+		r.noteStopTime()
+	}
 	ui.Logf("stopping…")
 	sup.Wait()
+	r.logStop(sup.Views(), time.Since(start))
 	ui.PrintSummary(sup.Views(), time.Since(start))
 }
 
 // inTray idles behind a tray icon until the user picks Stop idling, or Open
 // dashboard (which hands over to a new console window).
 func (r *idleRun) inTray() {
-	ctx, cancel := stopContext()
+	ctx, cancel := r.stopContext()
 	defer cancel()
+	start := time.Now()
 
-	sup := r.newSupervisor(func(idler.Event) {}) // the menu shows each game's state instead
+	sup := r.newSupervisor(func(idler.Event) {}) // the menu shows each game's state
+	r.logStart("in the tray")
 	sup.Start(ctx)
-	choice := tray.Run(sup, time.Now(), ctx.Done())
+	choice := tray.Run(sup, start, r.stopAt, ctx.Done())
+	timeUp := reachedStopTime(ctx)
 	cancel()
 	sup.Wait()
 
 	if choice == tray.ChoiceOpenDashboard {
+		r.log.Printf("info   opening the dashboard")
 		r.lock.Release()
-		if err := handover.LaunchDashboard(r.exePath, r.dllPath, r.appIDs); err != nil {
+		if err := handover.LaunchDashboard(r.exePath, r.libPath, r.stopAt, r.appIDs); err != nil {
 			ui.Fatal(err)
 		}
+		return
 	}
+	if timeUp {
+		r.log.Printf("info   reached the stop time (%s)", stoptime.Describe(r.stopAt, time.Now()))
+	}
+	r.logStop(sup.Views(), time.Since(start))
 }
 
-// handOffToTray starts a detached tray copy with the same games. The caller
-// must not hold the instance lock (the new copy needs it).
+// handOffToTray starts a detached tray copy with the same games and stop
+// time. The caller must not hold the instance lock (the new copy needs it).
 func (r *idleRun) handOffToTray() int {
-	if err := handover.LaunchTray(r.exePath, r.dllPath, r.appIDs); err != nil {
+	if err := handover.LaunchTray(r.exePath, r.libPath, r.stopAt, r.appIDs); err != nil {
 		return ui.Fatal(err)
 	}
 	ui.Notice(trayNotice)
 	return 0
+}
+
+// ---------- log lines ----------
+
+func (r *idleRun) logStart(where string) {
+	names := make([]string, len(r.games))
+	for i, g := range r.games {
+		names[i] = fmt.Sprintf("%s (%d)", g.Name, g.AppID)
+	}
+	r.log.Printf("start  idling %d game(s) %s: %s", len(r.games), where, strings.Join(names, ", "))
+}
+
+func (r *idleRun) logStop(views []idler.View, session time.Duration) {
+	var total time.Duration
+	for _, v := range views {
+		total += v.Idled
+	}
+	r.log.Printf("stop   after %s, +%.2f game-hours", session.Round(time.Second), total.Hours())
+}
+
+func levelWord(level idler.EventLevel) string {
+	switch level {
+	case idler.EventGood:
+		return "ok"
+	case idler.EventWarn:
+		return "warn"
+	case idler.EventBad:
+		return "error"
+	default:
+		return "info"
+	}
 }

@@ -1,5 +1,3 @@
-//go:build windows
-
 package ui
 
 import (
@@ -11,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"houridle/src/idler"
+	"houridle/src/stoptime"
 )
 
 const (
@@ -25,7 +24,8 @@ type dashboardState struct {
 	views    []idler.View
 	events   []idler.Event
 	stopping bool
-	frame    int // animation step for spinners
+	stopAt   time.Time // automatic stop; zero for none
+	frame    int       // animation step for spinners
 }
 
 func (d *Dashboard) state(frame int) dashboardState {
@@ -34,6 +34,7 @@ func (d *Dashboard) state(frame int) dashboardState {
 	defer d.mu.Unlock()
 	s.events = slices.Clone(d.events)
 	s.stopping = d.stopping
+	s.stopAt = d.stopAt
 	return s
 }
 
@@ -59,9 +60,12 @@ func (d *Dashboard) render(termW, termH, frame int) string {
 	out.line("")
 	out.line("  " + muted(strings.Repeat("─", width)))
 	out.line("  " + s.totalsLine(width, time.Since(d.start)))
+	if !s.stopAt.IsZero() {
+		out.line("  " + s.stopLine(width, time.Now()))
+	}
 	s.writeEvents(&out, width)
 	out.line("")
-	out.line("  " + s.hintLine(width, d.keysOn))
+	out.line("  " + s.hintLine(width, d.keysOn, d.trayOn))
 	return out.String()
 }
 
@@ -73,12 +77,16 @@ func (s *dashboardState) fitToHeight(termH int) int {
 		if len(s.events) > 0 {
 			eventLines = len(s.events) + 2 // blank line before, spare line after
 		}
-		return termH - dashboardChrome - eventLines
+		stopLine := 0
+		if !s.stopAt.IsZero() {
+			stopLine = 1
+		}
+		return termH - dashboardChrome - eventLines - stopLine
 	}
 	for room() < len(s.views) && len(s.events) > 0 {
 		s.events = s.events[1:]
 	}
-	return max(2, room())
+	return max(1, room())
 }
 
 // ---------- game table ----------
@@ -159,7 +167,7 @@ func (s dashboardState) gameStatus(v idler.View, width int) (icon, status string
 
 // ---------- totals, events and hint ----------
 
-// totalsLine summarizes the session, shortening itself on narrow consoles.
+// totalsLine summarizes the session in the longest form that fits.
 func (s dashboardState) totalsLine(width int, session time.Duration) string {
 	idling, waiting := 0, 0
 	var total time.Duration
@@ -173,30 +181,50 @@ func (s dashboardState) totalsLine(width int, session time.Duration) string {
 		}
 	}
 
-	var state string
+	var state, short string
 	switch {
 	case idling == 0 && waiting > 0:
-		state = "◌ waiting for steam"
+		state, short = "◌ waiting for steam", "◌ waiting"
 	case idling == 0:
-		state = "○ none idling"
+		state, short = "○ none idling", "○ none"
 	default:
 		state = fmt.Sprintf("● %d/%d idling", idling, len(s.views))
+		short = fmt.Sprintf("● %d/%d", idling, len(s.views))
 	}
 	colored := success
 	if idling == 0 {
 		colored = warning
 	}
+	sessionTime := clock(session)
+	gained := fmt.Sprintf("+%.2f", total.Hours())
 
-	gameHours := fmt.Sprintf("%.2f", total.Hours())
-	switch {
-	case width >= 56:
-		return colored(state) + "     " + muted("session ") + clock(session) + "     " + success("+"+gameHours) + muted(" game-hours")
-	case width >= 40:
-		return colored(state) + muted("  ·  ") + clock(session) + muted("  ·  +") + gameHours + muted(" h")
-	default:
-		short, _, _ := strings.Cut(state, " idling") // "● 2/3"
-		return colored(clip(short, width-10)) + "  " + clock(session)
+	// Each form as plain text (to measure) and colored (to show).
+	forms := []struct{ plain, shown string }{
+		{
+			state + "     session " + sessionTime + "     " + gained + " game-hours",
+			colored(state) + "     " + muted("session ") + sessionTime + "     " + success(gained) + muted(" game-hours"),
+		},
+		{
+			state + "  ·  " + sessionTime + "  ·  " + gained + " h",
+			colored(state) + muted("  ·  ") + sessionTime + muted("  ·  ") + gained + muted(" h"),
+		},
+		{
+			short + "  " + sessionTime,
+			colored(short) + "  " + sessionTime,
+		},
 	}
+	for _, f := range forms {
+		if utf8.RuneCountInString(f.plain) <= width {
+			return f.shown
+		}
+	}
+	return colored(clip(short, width))
+}
+
+// stopLine shows when the automatic stop happens, e.g. "stops at 23:30 · in 02:59:59".
+func (s dashboardState) stopLine(width int, now time.Time) string {
+	text := "stops at " + stoptime.Describe(s.stopAt, now) + " · in " + clock(max(0, s.stopAt.Sub(now)))
+	return muted(clip(text, width))
 }
 
 func (s dashboardState) writeEvents(out *screen, width int) {
@@ -209,14 +237,16 @@ func (s dashboardState) writeEvents(out *screen, width int) {
 	}
 }
 
-func (s dashboardState) hintLine(width int, keysOn bool) string {
+func (s dashboardState) hintLine(width int, keysOn, trayOn bool) string {
 	switch {
 	case s.stopping:
 		return warning(clip(spinnerFrames[s.frame%len(spinnerFrames)]+" stopping, closing helpers…", width))
-	case keysOn && width >= 22:
+	case keysOn && trayOn && width >= 22:
 		return accent("t") + muted(" send to tray   ") + accent("q") + muted(" stop")
-	case keysOn:
+	case keysOn && trayOn:
 		return accent("t") + muted(" tray · ") + accent("q") + muted(" stop")
+	case keysOn:
+		return accent("q") + muted(" stop")
 	default:
 		return muted(clip("ctrl+c to stop", width))
 	}

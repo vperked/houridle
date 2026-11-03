@@ -1,5 +1,3 @@
-//go:build windows
-
 package ui
 
 import (
@@ -38,10 +36,12 @@ type Dashboard struct {
 	start   time.Time
 	version string
 
-	mu       sync.Mutex // guards events and stopping
+	mu       sync.Mutex // guards events, stopping and stopAt
 	events   []idler.Event
 	stopping bool
+	stopAt   time.Time // automatic stop; zero for none
 
+	trayOn       bool   // "t" sends houridle to the tray (Windows)
 	keysOn       bool   // keyboard commands available (input is a console)
 	restoreInput func() // puts the console back to normal line input
 	actions      chan Action
@@ -49,10 +49,13 @@ type Dashboard struct {
 	exited       chan struct{} // closed when the draw loop has stopped
 }
 
-func NewDashboard(start time.Time, version string) *Dashboard {
+// NewDashboard prepares the dashboard. trayAvailable offers "t" to move to
+// the tray (only where there is one).
+func NewDashboard(start time.Time, version string, trayAvailable bool) *Dashboard {
 	return &Dashboard{
 		start:   start,
 		version: version,
+		trayOn:  trayAvailable,
 		actions: make(chan Action, 1),
 		done:    make(chan struct{}),
 		exited:  make(chan struct{}),
@@ -100,6 +103,13 @@ func (d *Dashboard) AddEvent(e idler.Event) {
 	d.events = append(d.events, e)
 }
 
+// SetStopTime shows when houridle will stop by itself (zero hides it).
+func (d *Dashboard) SetStopTime(at time.Time) {
+	d.mu.Lock()
+	d.stopAt = at
+	d.mu.Unlock()
+}
+
 // SetStopping switches the footer to "stopping…" while helpers shut down.
 func (d *Dashboard) SetStopping() {
 	d.mu.Lock()
@@ -139,7 +149,9 @@ func (d *Dashboard) readKeys() {
 		for _, key := range buf[:n] {
 			switch key {
 			case 't', 'T':
-				d.sendAction(ActionTray)
+				if d.trayOn {
+					d.sendAction(ActionTray)
+				}
 			case 'q', 'Q', ctrlC:
 				d.sendAction(ActionStop)
 			}

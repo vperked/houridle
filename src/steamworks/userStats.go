@@ -1,5 +1,3 @@
-//go:build windows
-
 package steamworks
 
 import (
@@ -34,31 +32,30 @@ type UserStats struct {
 // UserStats returns the stats interface for the current app.
 func (a *API) UserStats() (*UserStats, error) {
 	for _, name := range userStatsAccessors {
-		if p, err := a.dll.FindProc(name); err == nil {
-			if self, _, _ := p.Call(); self != 0 {
+		if accessor, ok := a.lib.lookup(name); ok {
+			if self := accessor(); self != 0 {
 				return &UserStats{api: a, self: self}, nil
 			}
 		}
 	}
-	return nil, &Error{CodeLoad, "this steam_api64.dll has no ISteamUserStats interface houridle recognizes"}
+	return nil, &Error{CodeLoad, "this Steam API library has no ISteamUserStats interface houridle recognizes"}
 }
 
 // call invokes SteamAPI_ISteamUserStats_<method>(self, args...).
 func (s *UserStats) call(method string, args ...uintptr) (uintptr, error) {
-	p, err := s.api.proc("SteamAPI_ISteamUserStats_" + method)
+	fn, err := s.api.function("SteamAPI_ISteamUserStats_" + method)
 	if err != nil {
 		return 0, err
 	}
-	r, _, _ := p.Call(append([]uintptr{s.self}, args...)...)
-	return r, nil
+	return fn(append([]uintptr{s.self}, args...)...), nil
 }
 
 // Load waits for Steam to deliver your stats, which newer SDKs request
 // automatically at init (older ones need RequestCurrentStats). It returns the
 // number of achievements; 0 after the timeout means the game has none.
 func (s *UserStats) Load(timeout time.Duration) (int, error) {
-	if p, err := s.api.dll.FindProc("SteamAPI_ISteamUserStats_RequestCurrentStats"); err == nil {
-		p.Call(s.self)
+	if request, ok := s.api.lib.lookup("SteamAPI_ISteamUserStats_RequestCurrentStats"); ok {
+		request(s.self)
 	}
 	deadline := time.Now().Add(timeout)
 	for {

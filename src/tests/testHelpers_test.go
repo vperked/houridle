@@ -1,5 +1,3 @@
-//go:build windows
-
 package tests
 
 import (
@@ -51,7 +49,7 @@ var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
 // taller than it (a full last line would scroll the screen and flicker).
 func checkFrame(t *testing.T, frame string, width, height int) {
 	t.Helper()
-	plain := ansiCodes.ReplaceAllString(frame, "")
+	plain := strings.ReplaceAll(ansiCodes.ReplaceAllString(frame, ""), "\r\n", "\n")
 	lines := strings.Split(strings.TrimSuffix(plain, "\n"), "\n")
 	if len(lines) > height-1 {
 		t.Errorf("%dx%d: frame has %d lines, console fits %d", width, height, len(lines), height-1)

@@ -1,5 +1,3 @@
-//go:build windows
-
 package idler
 
 import (
@@ -10,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"houridle/src/childproc"
 )
 
 const (
 	readyTimeout     = 30 * time.Second // a helper must report in within this
 	stopGracePeriod  = 5 * time.Second  // before a helper is killed on shutdown
-	createNoWindow   = 0x08000000       // Windows: start without a console window
 	maxHelperLogSize = 64 << 10         // cap on buffered helper output
 )
 
@@ -40,11 +38,10 @@ func (f *helperFailure) Error() string { return f.msg }
 // startHelper launches a hidden helper for appID.
 func startHelper(exePath, dllPath string, appID uint32) (*helperProcess, error) {
 	h := &helperProcess{
-		cmd:    exec.Command(exePath, "-"+HelperFlag, strconv.FormatUint(uint64(appID), 10), "-dll", dllPath),
+		cmd:    childproc.Command(exePath, "-"+HelperFlag, strconv.FormatUint(uint64(appID), 10), "-dll", dllPath),
 		ready:  &readyWatcher{result: make(chan string, 1)},
 		exited: make(chan struct{}),
 	}
-	h.cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP}
 	h.cmd.Stdout = h.ready
 
 	var err error

@@ -1,7 +1,8 @@
-//go:build windows
-
 // Package ui is houridle's terminal interface: colors and layout helpers, the
-// live dashboard, the game picker, and plain-text fallbacks.
+// live dashboard, the pickers, and plain-text fallbacks.
+//
+// Talking to the console itself differs per OS (consoleWindows.go,
+// consoleLinux.go); everything else in this package is shared.
 package ui
 
 import (
@@ -11,9 +12,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 const (
@@ -34,54 +32,20 @@ var styled bool
 
 var stdinReader = bufio.NewReader(os.Stdin)
 
-// Init turns on ANSI escape handling in the Windows console.
-func Init() {
-	h := windows.Handle(os.Stdout.Fd())
-	var mode uint32
-	if windows.GetConsoleMode(h, &mode) != nil {
-		return
-	}
-	styled = windows.SetConsoleMode(h, mode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING) == nil
-}
+// Init checks what the console can do and turns on colors where supported.
+func Init() { styled = enableColors() }
 
 // Styled reports whether the full interface (colors, dashboard, picker) is on.
 func Styled() bool { return styled }
 
-func stdinIsTerminal() bool {
-	var mode uint32
-	return windows.GetConsoleMode(windows.Handle(os.Stdin.Fd()), &mode) == nil
-}
-
-// termSize returns the visible console size in cells.
-func termSize() (width, height int) {
-	var info windows.ConsoleScreenBufferInfo
-	if windows.GetConsoleScreenBufferInfo(windows.Handle(os.Stdout.Fd()), &info) != nil {
-		return 80, 24
-	}
-	return int(info.Window.Right-info.Window.Left) + 1, int(info.Window.Bottom-info.Window.Top) + 1
-}
+// CanPrompt reports whether houridle can ask the user something (input is a
+// console, not a service or a pipe).
+func CanPrompt() bool { return stdinIsTerminal() }
 
 // contentWidth is the usable width inside the 2-cell left margin, leaving a
 // little room on the right so lines never wrap.
 func contentWidth(termW int) int {
 	return max(minContentWidth, min(termW-4, maxContentWidth))
-}
-
-var kernel32 = windows.NewLazySystemDLL("kernel32.dll")
-
-// launchedByDoubleClick is true when houridle owns its console window (opened
-// from Explorer), so the window would vanish the moment we exit.
-func launchedByDoubleClick() bool {
-	var pids [4]uint32
-	n, _, _ := kernel32.NewProc("GetConsoleProcessList").Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
-	return n == 1
-}
-
-// HasConsoleWindow reports whether this process has a console at all (the
-// tray process runs detached, without one).
-func HasConsoleWindow() bool {
-	hwnd, _, _ := kernel32.NewProc("GetConsoleWindow").Call()
-	return hwnd != 0
 }
 
 // ---------- palette ----------
@@ -125,12 +89,13 @@ func clip(s string, w int) string {
 type screen struct{ b strings.Builder }
 
 // line adds one line, clearing whatever was left on it from the last frame.
+// Lines end in \r\n because raw mode on Linux doesn't add the \r itself.
 func (s *screen) line(text string) {
 	if s.b.Len() == 0 {
 		s.b.WriteString(cursorHome)
 	}
 	s.b.WriteString(text)
-	s.b.WriteString(clearLine + "\n")
+	s.b.WriteString(clearLine + "\r\n")
 }
 
 // String returns the frame, clearing any old lines below it.
@@ -177,9 +142,7 @@ func UseMessageBoxForErrors() { errorsInMessageBox = true }
 // In tray mode it shows a message box instead. Returns the exit code.
 func Fatal(err error) int {
 	if errorsInMessageBox {
-		text, _ := windows.UTF16PtrFromString(err.Error())
-		title, _ := windows.UTF16PtrFromString("houridle")
-		windows.MessageBox(0, text, title, windows.MB_OK|windows.MB_ICONERROR)
+		showErrorBox(err.Error())
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "\n  %s %s\n\n", danger("✕"), err.Error())

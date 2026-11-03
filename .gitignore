@@ -1,5 +1,6 @@
 # Build output
 *.exe
+/houridle
 *.exe~
 *.test
 *.out
@@ -25,3 +26,7 @@ go.work.sum
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Activity log
+houridle.log
+houridle.log.1

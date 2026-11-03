@@ -1,5 +1,3 @@
-//go:build windows
-
 // Package idler keeps games "running" in Steam. Each game gets a small hidden
 // helper process (houridle re-run with -child <appid>); a worker per game
 // starts its helper and restarts it if it stops.

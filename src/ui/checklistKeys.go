@@ -1,14 +1,9 @@
-//go:build windows
-
 package ui
 
 import (
 	"bytes"
-	"os"
 	"unicode"
 	"unicode/utf8"
-
-	"golang.org/x/sys/windows"
 )
 
 // Single-byte keys, as the console sends them in raw mode.
@@ -102,19 +97,4 @@ func skipEscape(input []byte) []byte {
 		}
 	}
 	return nil
-}
-
-// enableRawInput switches the console to one-key-at-a-time input, with
-// escape sequences for arrow keys. It returns a func that restores it.
-func enableRawInput() (restore func(), err error) {
-	h := windows.Handle(os.Stdin.Fd())
-	var old uint32
-	if err := windows.GetConsoleMode(h, &old); err != nil {
-		return nil, err
-	}
-	raw := old&^(windows.ENABLE_ECHO_INPUT|windows.ENABLE_LINE_INPUT|windows.ENABLE_PROCESSED_INPUT) | windows.ENABLE_VIRTUAL_TERMINAL_INPUT
-	if err := windows.SetConsoleMode(h, raw); err != nil {
-		return nil, err
-	}
-	return func() { windows.SetConsoleMode(h, old) }, nil
 }

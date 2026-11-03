@@ -1,7 +1,8 @@
-//go:build windows
-
 // Package steam reads the local Steam install: where it is, whether it's
-// running, your games and playtime, and a steam_api64.dll to load.
+// running, your games and playtime, and a Steam API library to load.
+//
+// Finding Steam differs per OS (steamWindows.go, steamLinux.go); reading
+// its files is shared and lives here.
 package steam
 
 import (
@@ -12,57 +13,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
 
-const (
-	apiDLLName      = "steam_api64.dll"
-	dllSearchDepth  = 3   // folders below steamapps/common/<game> to look in
-	stillActiveCode = 259 // STILL_ACTIVE from GetExitCodeProcess
-)
-
-// Path returns the Steam install folder from the registry.
-func Path() (string, error) {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Valve\Steam`, registry.QUERY_VALUE)
-	if err != nil {
-		return "", errors.New("couldn't find Steam: it doesn't seem to be installed")
-	}
-	defer k.Close()
-	p, _, err := k.GetStringValue("SteamPath")
-	if err != nil || p == "" {
-		return "", errors.New("couldn't find Steam's install folder in the registry")
-	}
-	return filepath.Clean(p), nil
-}
-
-// activeProcess reads Steam's running PID and signed-in account ID.
-func activeProcess() (pid, accountID uint32) {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Valve\Steam\ActiveProcess`, registry.QUERY_VALUE)
-	if err != nil {
-		return 0, 0
-	}
-	defer k.Close()
-	p, _, _ := k.GetIntegerValue("pid")
-	u, _, _ := k.GetIntegerValue("ActiveUser")
-	return uint32(p), uint32(u)
-}
+// apiSearchDepth is how many folders below steamapps/common/<game> to look
+// for the Steam API library.
+const apiSearchDepth = 3
 
 // Running reports whether the Steam client is running and signed in. The
-// registry PID can be stale after a crash, so the process is checked too.
+// recorded PID can be stale after a crash, so the process is checked too.
 func Running() bool {
 	pid, user := activeProcess()
-	if pid == 0 || user == 0 {
-		return false
-	}
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
-	if err != nil {
-		return false
-	}
-	defer windows.CloseHandle(h)
-	var code uint32
-	return windows.GetExitCodeProcess(h, &code) == nil && code == stillActiveCode
+	return pid != 0 && user != 0 && processAlive(pid)
 }
 
 func readVDF(path string) (VDF, error) {
@@ -79,7 +40,7 @@ func libraryFolders(steamDir string) []string {
 	var out []string
 	add := func(p string) {
 		p = filepath.Clean(p)
-		if key := strings.ToLower(p); !seen[key] {
+		if key := pathKey(p); !seen[key] {
 			seen[key] = true
 			out = append(out, p)
 		}
@@ -94,6 +55,8 @@ func libraryFolders(steamDir string) []string {
 	}
 	return out
 }
+
+// ---------- games ----------
 
 // gameList is a set of games keyed by app ID, built up from several files.
 type gameList map[uint32]*Game
@@ -165,14 +128,30 @@ func parseAppID(s string) (uint32, bool) {
 	return uint32(id), err == nil && id != 0
 }
 
-// FindAPIDLL returns a steam_api64.dll to load. It prefers a copy next to
-// houridle; otherwise it copies the newest one found in your installed games.
-func FindAPIDLL(appDir, steamDir string) (string, error) {
-	local := filepath.Join(appDir, apiDLLName)
+// ---------- the Steam API library ----------
+
+// FindAPILibrary returns the Steam API library to load (steam_api64.dll or
+// libsteam_api.so). It prefers a copy next to houridle; otherwise it copies
+// the newest usable one found in your installed games.
+func FindAPILibrary(appDir, steamDir string) (string, error) {
+	local := filepath.Join(appDir, apiLibraryName)
 	if _, err := os.Stat(local); err == nil {
 		return local, nil
 	}
 
+	best := newestAPILibrary(steamDir)
+	if best == "" {
+		return "", errors.New("couldn't find " + apiLibraryName + " in your Steam games; put a copy next to houridle or pass -dll")
+	}
+	if err := copyFile(best, local); err != nil {
+		return best, nil // can't write next to houridle; load it in place
+	}
+	return local, nil
+}
+
+// newestAPILibrary searches installed games for the most recently updated
+// copy of the library that this computer can load.
+func newestAPILibrary(steamDir string) string {
 	var best string
 	var bestTime int64
 	for _, lib := range libraryFolders(steamDir) {
@@ -183,12 +162,12 @@ func FindAPIDLL(appDir, steamDir string) (string, error) {
 				return nil // unreadable folder; keep going
 			}
 			if d.IsDir() {
-				if strings.Count(p, string(os.PathSeparator))-baseDepth > dllSearchDepth+1 {
+				if strings.Count(p, string(os.PathSeparator))-baseDepth > apiSearchDepth+1 {
 					return fs.SkipDir
 				}
 				return nil
 			}
-			if !strings.EqualFold(d.Name(), apiDLLName) {
+			if !strings.EqualFold(d.Name(), apiLibraryName) || !loadable(p) {
 				return nil
 			}
 			if info, err := d.Info(); err == nil && info.ModTime().Unix() > bestTime {
@@ -197,13 +176,7 @@ func FindAPIDLL(appDir, steamDir string) (string, error) {
 			return nil
 		})
 	}
-	if best == "" {
-		return "", errors.New("couldn't find " + apiDLLName + " in your Steam games; put a copy next to houridle.exe or pass -dll")
-	}
-	if err := copyFile(best, local); err != nil {
-		return best, nil // can't write next to the exe; load it in place
-	}
-	return local, nil
+	return best
 }
 
 func copyFile(src, dst string) error {

@@ -1,99 +1,95 @@
-//go:build windows
-
 // Package handover moves an idling session between the console window and
-// the system tray, and makes sure only one houridle idles at a time.
+// the system tray (Windows), and makes sure only one houridle idles at a
+// time (all OSes).
 //
 // Switching works by starting a fresh houridle in the other mode with the
 // same games, then exiting. The lock is released first so the new copy can
 // take it.
+//
+// The lock and the launching differ per OS (handoverWindows.go,
+// handoverLinux.go); the rest is shared.
 package handover
 
 import (
 	"errors"
-	"os/exec"
 	"strconv"
-	"syscall"
+	"sync"
 	"time"
 
-	"golang.org/x/sys/windows"
+	"houridle/src/stoptime"
 )
 
 const (
-	detachedProcess  = 0x00000008 // no console at all: the tray process
-	createNewConsole = 0x00000010 // its own console window: the dashboard
-
-	lockName         = `Local\houridle-idle`
 	lockWaitAttempts = 20 // × lockWaitInterval: covers a handover in progress
 	lockWaitInterval = 250 * time.Millisecond
 )
 
-// Args builds the command line that idles appIDs in tray or console mode.
-// Flags come before the app IDs, because Go's flag parsing stops at the
-// first plain argument.
-func Args(toTray bool, dllPath string, appIDs []uint32) []string {
+// ErrNoTray is returned on systems without a tray (Linux servers).
+var ErrNoTray = errors.New("the tray is only available on Windows; on Linux, run houridle in tmux or as a service (see the README)")
+
+// SessionMode is set when houridle idles through a saved Steam sign-in
+// (houridle start) instead of the Steam client, so a handover keeps doing so.
+var SessionMode bool
+
+// Idling reports whether a houridle is idling right now, on this computer
+// for this user.
+func Idling() bool {
+	release, err := tryLock()
+	if err != nil {
+		return false
+	}
+	if release == nil {
+		return true
+	}
+	release()
+	return false
+}
+
+// Args builds the command line that idles appIDs in tray or console mode,
+// keeping the same automatic stop time. Flags come before the app IDs,
+// because Go's flag parsing stops at the first plain argument.
+func Args(toTray bool, libPath string, stopAt time.Time, appIDs []uint32) []string {
 	var args []string
+	if SessionMode {
+		args = append(args, "start") // the new copy idles through the saved sign-in too
+	}
 	if toTray {
 		args = append(args, "-tray")
 	}
-	args = append(args, "-dll", dllPath)
+	if !SessionMode {
+		args = append(args, "-dll", libPath)
+	}
+	args = append(args, "-stop", stoptime.Format(stopAt))
 	for _, id := range appIDs {
 		args = append(args, strconv.FormatUint(uint64(id), 10))
 	}
 	return args
 }
 
-// LaunchTray starts houridle in the tray, detached from any console.
-func LaunchTray(exePath, dllPath string, appIDs []uint32) error {
-	return start(exePath, Args(true, dllPath, appIDs), detachedProcess|syscall.CREATE_NEW_PROCESS_GROUP)
-}
-
-// LaunchDashboard starts houridle with the dashboard in a new console window.
-func LaunchDashboard(exePath, dllPath string, appIDs []uint32) error {
-	return start(exePath, Args(false, dllPath, appIDs), createNewConsole)
-}
-
-func start(exePath string, args []string, flags uint32) error {
-	cmd := exec.Command(exePath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	return cmd.Process.Release()
-}
-
 // Lock is held while idling, so a second copy can't idle the same games
 // twice (e.g. one in the tray and one started by double-click).
-type Lock struct{ handle windows.Handle }
+type Lock struct {
+	once    sync.Once
+	release func()
+}
 
 // TakeLock gets the idle lock, waiting a few seconds in case another copy is
 // handing over to us. It fails if houridle is already idling.
 func TakeLock() (*Lock, error) {
-	name, err := windows.UTF16PtrFromString(lockName)
-	if err != nil {
-		return nil, err
-	}
 	for attempt := 0; ; attempt++ {
-		h, err := windows.CreateMutex(nil, false, name)
-		if err == nil {
-			return &Lock{handle: h}, nil
-		}
-		if h != 0 {
-			windows.CloseHandle(h)
-		}
-		if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		release, err := tryLock()
+		if err != nil {
 			return nil, err
 		}
+		if release != nil {
+			return &Lock{release: release}, nil
+		}
 		if attempt == lockWaitAttempts {
-			return nil, errors.New("houridle is already idling. Look for its icon in the tray, by the clock")
+			return nil, errors.New(alreadyIdlingMessage)
 		}
 		time.Sleep(lockWaitInterval)
 	}
 }
 
 // Release lets another copy take the lock. Safe to call more than once.
-func (l *Lock) Release() {
-	if l.handle != 0 {
-		windows.CloseHandle(l.handle)
-		l.handle = 0
-	}
-}
+func (l *Lock) Release() { l.once.Do(l.release) }

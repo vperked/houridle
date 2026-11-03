@@ -1,5 +1,3 @@
-//go:build windows
-
 package achievements
 
 import (
@@ -11,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"houridle/src/childproc"
 	"houridle/src/steamworks"
 )
 
@@ -21,7 +19,6 @@ const (
 	loadTimeout     = 30 * time.Second
 	applyTimeout    = 30 * time.Second
 	stopGracePeriod = 5 * time.Second
-	createNoWindow  = 0x08000000
 	maxBufferedLine = 1 << 20
 )
 
@@ -37,8 +34,7 @@ type Session struct {
 // exePath is houridle itself, re-run in helper mode.
 func Open(exePath, dllPath string, appID uint32) (*Session, []steamworks.Achievement, error) {
 	sink := &lineSink{lines: make(chan string, 4)}
-	cmd := exec.Command(exePath, "-"+HelperFlag, strconv.FormatUint(uint64(appID), 10), "-dll", dllPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP}
+	cmd := childproc.Command(exePath, "-"+HelperFlag, strconv.FormatUint(uint64(appID), 10), "-dll", dllPath)
 	cmd.Stdout = sink
 	stdin, err := cmd.StdinPipe()
 	if err == nil {

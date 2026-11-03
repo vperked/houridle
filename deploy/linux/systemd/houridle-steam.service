@@ -1,0 +1,15 @@
+# The Steam client, running on the virtual display. houridle works through it.
+# setup.sh fills in STEAM_PATH.
+[Unit]
+Description=houridle: Steam client
+Requires=houridle-display.service
+After=houridle-display.service
+
+[Service]
+Environment=DISPLAY=:99
+ExecStart=STEAM_PATH -silent
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

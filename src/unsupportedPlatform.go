@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package main
 
@@ -7,8 +7,9 @@ import (
 	"os"
 )
 
-// houridle drives the Windows Steam client through steam_api64.dll.
+// houridle needs the Steam client and its API library, which it supports on
+// Windows and Linux.
 func main() {
-	fmt.Fprintln(os.Stderr, "houridle only runs on Windows.")
+	fmt.Fprintln(os.Stderr, "houridle runs on Windows and Linux.")
 	os.Exit(1)
 }

@@ -1,5 +1,3 @@
-//go:build windows
-
 // Package achievements lists and changes a game's Steam achievements. The
 // Steamworks work happens in a helper process (one app per process), driven
 // by the parent over JSON lines on stdin/stdout.
