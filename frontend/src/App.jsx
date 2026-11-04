@@ -143,10 +143,12 @@ function NowScreen({ live, refresh, setTab, level }) {
   const panel = data.panel;
   const { now, games, extra } = useLive(live);
   const showGames = !panel || panel.idling;
+  const activity = <Activity events={data.events ?? []} />;
   return (
     <Page title={panel ? "Now" : null} wide={!!panel}>
-      {/* On a desktop: the status on the left, the games on the right. */}
-      <div className={`space-y-7 ${showGames && panel ? "lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8 lg:space-y-0" : ""}`}>
+      {/* On a desktop: the status on the left; the games (or, when not
+          idling, the activity) on the right. */}
+      <div className={`space-y-7 ${panel ? "lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8 lg:space-y-0" : ""}`}>
         <div className="space-y-7">
           <StandingWarning standing={panel?.standing} onOpen={() => setTab("more", "accounts")} />
           {panel && !panel.idling ? (
@@ -159,15 +161,11 @@ function NowScreen({ live, refresh, setTab, level }) {
           )}
           {level && <LevelCard level={level} onOpen={() => setTab("more", "badges")} />}
           {panel?.extras?.some((e) => e.on) && <AlsoIdling extras={panel.extras.filter((e) => e.on)} onOpen={() => setTab("more", "accounts")} />}
-          <div className={showGames && panel ? "max-lg:hidden" : "hidden"}>
-            <Activity events={data.events ?? []} />
-          </div>
+          {showGames && panel && <div className="max-lg:hidden">{activity}</div>}
         </div>
         <div className="space-y-7">
-          {showGames && <Games games={games} loading={!data} />}
-          <div className={showGames && panel ? "lg:hidden" : ""}>
-            <Activity events={data.events ?? []} />
-          </div>
+          {showGames ? <Games games={games} loading={!data} /> : activity}
+          {showGames && <div className={panel ? "lg:hidden" : ""}>{activity}</div>}
         </div>
       </div>
     </Page>

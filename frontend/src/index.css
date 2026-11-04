@@ -6,17 +6,18 @@
 
 
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-  --color-bg: #f5f5f7;
+  --color-bg: #f6f6f8;
   --color-surface: #ffffff;
-  --color-line: rgb(0 0 0 / 0.08);
-  --color-fg: #111113;
-  --color-sub: #6e6e76;
-  --color-faint: #a1a1aa;
-  --color-fill: rgb(0 0 0 / 0.045);
-  --color-accent: #0a66ff;
+  --color-line: rgb(15 15 30 / 0.08);
+  --color-fg: #0f0f14;
+  --color-sub: #6b6b76;
+  --color-faint: #a3a3ad;
+  --color-fill: rgb(15 15 30 / 0.05);
+  --color-accent: #4f46e5; /* links, icons, progress */
+  --color-brand: #5b5bf0; /* filled buttons (white text) */
   --color-good: #16a34a;
   --color-bad: #dc2626;
   --color-warn: #b45309;
@@ -29,17 +30,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #000000;
-    --color-surface: #141416;
-    --color-line: rgb(255 255 255 / 0.09);
-    --color-fg: #f4f4f5;
-    --color-sub: #9a9aa3;
-    --color-faint: #63636b;
-    --color-fill: rgb(255 255 255 / 0.07);
-    --color-accent: #3b8bff;
-    --color-good: #22c55e;
-    --color-bad: #f05252;
-    --color-warn: #f0b429;
+    --color-bg: #09090b;
+    --color-surface: #131316;
+    --color-line: rgb(255 255 255 / 0.075);
+    --color-fg: #f4f4f6;
+    --color-sub: #9b9ba6;
+    --color-faint: #5f5f69;
+    --color-fill: rgb(255 255 255 / 0.06);
+    --color-accent: #8f95ff;
+    --color-brand: #6366f1;
+    --color-good: #34d399;
+    --color-bad: #f87171;
+    --color-warn: #fbbf24;
   }
 }
 
@@ -60,6 +62,14 @@
     transform: translateY(8px) scale(0.98);
   }
 }
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
 @keyframes countdown {
   from {
     width: 100%;
@@ -77,6 +87,22 @@
   }
   body {
     @apply min-h-dvh bg-bg font-sans text-[15px] leading-snug text-fg antialiased;
+    font-feature-settings: "cv11"; /* Inter's simpler "a" */
+  }
+  /* A faint wash of the accent at the top of the page. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: 420px;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--color-brand) 9%, transparent), transparent);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
   }
   ::selection {
     @apply bg-accent/25;
@@ -92,7 +118,7 @@
 @layer components {
   /* A surface: a white (or dark grey) block with a hairline edge. */
   .surface {
-    @apply rounded-2xl border border-line bg-surface;
+    @apply rounded-2xl border border-line bg-surface shadow-[0_1px_2px_rgb(15_15_30/0.04)] dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.035)];
   }
   /* Rows inside a surface, separated by hairlines. */
   .rows > * + * {
@@ -120,7 +146,7 @@
     @apply border border-line bg-surface text-fg;
   }
   .btn-primary {
-    @apply bg-fg text-bg;
+    @apply bg-brand text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.18),0_6px_18px_-8px_var(--color-brand)];
   }
   .btn-danger {
     @apply border border-line bg-surface text-bad;
@@ -166,6 +192,13 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Loading placeholders: a soft sheen sweeping across. */
+  .shimmer {
+    background: linear-gradient(90deg, var(--color-fill) 25%, color-mix(in srgb, var(--color-fill) 40%, var(--color-line)) 50%, var(--color-fill) 75%);
+    background-size: 300% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
   }
 }
 
@@ -242,6 +275,9 @@
 @media (prefers-reduced-motion: reduce) {
   .roll-strip {
     transition: none;
+  }
+  .shimmer {
+    animation: none;
   }
   .eq > span {
     animation: none;

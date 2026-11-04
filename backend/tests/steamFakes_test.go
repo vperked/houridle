@@ -183,7 +183,8 @@ type fakeCM struct {
 	licenses     []uint32 // package IDs the account owns (sent after sign-in)
 	stickerReady bool     // a sale-event sticker can be claimed
 
-	cart     []uint32 // package IDs in the store cart, by line (line ID = index+1)
+	family   []fakeGame // games the account's Steam family shares with it (nil: no family)
+	cart     []uint32   // package IDs in the store cart, by line (line ID = index+1)
 	nextLine uint64
 }
 
@@ -429,6 +430,24 @@ func (f *fakeCM) answerCall(req, body *steamauth.Decoded) []byte {
 			}
 			resp.Message(1, item)
 		}
+	case "FamilyGroups.GetFamilyGroupForUser#1":
+		f.mu.Lock()
+		if f.family == nil {
+			resp.Bool(2, true) // not in a family
+		} else {
+			resp.Varint(1, 4242)
+		}
+		f.mu.Unlock()
+	case "FamilyGroups.GetSharedLibraryApps#1":
+		f.mu.Lock()
+		if body.Uint(1) == 4242 && !body.Bool(2) {
+			for _, g := range f.family {
+				resp.Message(1, new(steamauth.Encoder).Varint(1, uint64(g.ID)).Fixed64(2, bob).String(6, g.Name))
+			}
+			// One the owner keeps to themself: not shared.
+			resp.Message(1, new(steamauth.Encoder).Varint(1, 77).Fixed64(2, bob).String(6, "Excluded").Varint(10, 3))
+		}
+		f.mu.Unlock()
 	case "AccountCart.GetCart#1":
 		f.mu.Lock()
 		contents := new(steamauth.Encoder)

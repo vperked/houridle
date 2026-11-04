@@ -155,6 +155,7 @@ houridle web
 - **Schedule (Idle):** idle only at certain hours and days, such as overnight. Idling pauses when the hours end and picks up again when they start; Start and Stop still work any time.
 - **Unlock gradually (Trophies):** unlock a game's achievements one at a time, about every 15 minutes to a day, the most common first, so your profile looks like you played. It carries on while houridle runs.
 - **Idle alongside (Accounts):** other saved accounts can idle at the same time, each on its own Steam connection: their card drops, or every game they own.
+- **Family games:** games your [Steam family](https://store.steampowered.com/families) shares with you show up alongside your own (marked "Family") in the Idle and Achievements lists, and "Everything" idles them too. Hours count on your account. Borrowed games don't drop trading cards, and the owner always comes first: if they start playing, Steam stops the borrowed copy.
 - **Steam record (Accounts):** VAC and game bans, trade restrictions, whether the account is limited, and whether the Market is open to it. houridle checks twice a day and alerts you when anything changes (a new ban, a trade restriction, or one lifted); a ban or trade restriction also shows on the Now tab.
 - **Weekly summary (Alerts):** on Sunday evenings, a message with the week's hours, card drops, badges, achievements, money spent and your Steam level.
 

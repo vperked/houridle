@@ -107,6 +107,7 @@ type LibraryGame struct {
 	AppID   uint32 `json:"appId"`
 	Name    string `json:"name"`
 	Minutes int    `json:"minutes"`
+	Shared  bool   `json:"shared,omitempty"` // a Steam family member's game, shared with you
 }
 
 // Achievement is one of a game's achievements.

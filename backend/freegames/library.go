@@ -45,11 +45,34 @@ func OwnedApps(ctx context.Context, steamID uint64, accessToken string) ([]uint3
 
 const libraryTimeout = time.Minute
 
-// Library is every game the account owns: Steam's owned-games list (with
+// Library is every game the account can play: its own (see ownedLibrary)
+// and the ones its Steam family shares with it, marked Shared.
+func Library(ctx context.Context, cs *steamcm.Session, steamID uint64) ([]steamcm.OwnedGame, error) {
+	owned, err := ownedLibrary(ctx, cs, steamID)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := cs.SharedGames(ctx)
+	if err != nil || len(shared) == 0 {
+		return owned, nil // no family (or it couldn't say): the account's own games
+	}
+	have := make(map[uint32]bool, len(owned))
+	for _, g := range owned {
+		have[g.AppID] = true
+	}
+	for _, g := range shared {
+		if !have[g.AppID] {
+			owned = append(owned, steamcm.OwnedGame{AppID: g.AppID, Name: g.Name, Shared: true})
+		}
+	}
+	return owned, nil
+}
+
+// ownedLibrary is every game the account owns: Steam's owned-games list (with
 // playtime), plus the free games added but never played, which that list
 // leaves out. If the store can't be asked, the owned-games list alone is
 // returned.
-func Library(ctx context.Context, cs *steamcm.Session, steamID uint64) ([]steamcm.OwnedGame, error) {
+func ownedLibrary(ctx context.Context, cs *steamcm.Session, steamID uint64) ([]steamcm.OwnedGame, error) {
 	// Steam's list and the store's don't depend on each other.
 	storeCtx, cancel := context.WithTimeout(ctx, libraryTimeout)
 	defer cancel()

@@ -94,11 +94,23 @@ export function Group({ title, action, footer, children, flush }) {
 // Row is one line in a Group: an optional leading icon or picture, a title
 // and detail, and something trailing. With onClick it's a button with a
 // chevron.
-export function Row({ icon, lead, title, detail, trailing, onClick, chevron = !!onClick, tone, className = "" }) {
+// Quiet colors for section icons.
+const TINTS = {
+  green: "bg-emerald-500/15 text-emerald-500",
+  amber: "bg-amber-500/15 text-amber-500",
+  violet: "bg-violet-500/15 text-violet-400",
+  sky: "bg-sky-500/15 text-sky-500",
+  pink: "bg-pink-500/15 text-pink-500",
+  indigo: "bg-indigo-500/15 text-indigo-400",
+  red: "bg-rose-500/15 text-rose-500",
+  teal: "bg-teal-500/15 text-teal-500",
+};
+
+export function Row({ icon, lead, title, detail, trailing, onClick, chevron = !!onClick, tone, tint, className = "" }) {
   const inner = (
     <>
       {icon && (
-        <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${tone === "bad" ? "bg-bad/10 text-bad" : "bg-fill text-fg"}`}>
+        <span className={`grid size-8 shrink-0 place-items-center rounded-[9px] ${tone === "bad" ? "bg-bad/12 text-bad" : (TINTS[tint] ?? "bg-fill text-fg")}`}>
           <Icon name={icon} className="size-[18px]" />
         </span>
       )}
@@ -175,11 +187,11 @@ export function Skeleton({ rows = 4, art }) {
   return (
     <div className="rows" aria-busy="true" aria-label="Loading">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="row animate-pulse">
-          {art && <span className="h-9 w-[84px] rounded-md bg-fill" />}
+        <div key={i} className="row">
+          {art && <span className="shimmer h-9 w-[84px] rounded-md" />}
           <span className="flex-1 space-y-2">
-            <span className="block h-3 w-2/3 rounded bg-fill" />
-            <span className="block h-2.5 w-1/3 rounded bg-fill" />
+            <span className="shimmer block h-3 w-2/3 rounded" />
+            <span className="shimmer block h-2.5 w-1/3 rounded" />
           </span>
         </div>
       ))}

@@ -55,7 +55,7 @@ export function Sidebar({ tab, onChange, data, live }) {
               type="button"
               aria-current={on ? "page" : undefined}
               onClick={() => onChange(t.value)}
-              className={`flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[15px] font-medium transition-colors ${on ? "bg-fill text-fg" : "sub hover:bg-fill hover:text-fg"}`}
+              className={`relative flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[15px] font-medium transition-colors ${on ? "bg-accent/12 text-fg" : "sub hover:bg-fill hover:text-fg"}`}
             >
               <Icon name={t.icon} className={`size-5 ${on ? "text-accent" : ""}`} strokeWidth={on ? 2.1 : 1.8} />
               {t.value === "achievements" ? "Achievements" : t.label}

@@ -65,7 +65,7 @@ export default function Shop({ signedIn }) {
   }
   return (
     <>
-      {shop ? <WalletCard {...shop} busy={capBusy} onCap={(c) => setCap(c, shop.currency)} /> : <div className="surface h-[124px] animate-pulse" />}
+      {shop ? <WalletCard {...shop} busy={capBusy} onCap={(c) => setCap(c, shop.currency)} /> : <div className="surface shimmer h-[124px]" />}
       {shop && !shop.allowed && (
         <Note tone="warn">
           <b className="font-semibold">The Market isn't open to this account yet.</b> {shop.reason}

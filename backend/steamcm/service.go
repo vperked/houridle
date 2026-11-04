@@ -79,7 +79,8 @@ func (s *Session) Call(ctx context.Context, method string, body []byte) (*steama
 type OwnedGame struct {
 	AppID   uint32
 	Name    string
-	Minutes int // total playtime
+	Minutes int  // total playtime
+	Shared  bool // not the account's: a Steam family member shares it
 }
 
 // OwnedGames asks Steam which games the signed-in account owns, most played
@@ -332,4 +333,55 @@ func (s *Session) RemoveFromCart(ctx context.Context, line uint64) error {
 	req := new(steamauth.Encoder).Varint(1, line).String(2, s.Country())
 	_, err := s.Call(ctx, "AccountCart.RemoveItemFromCart#1", req.Out())
 	return err
+}
+
+// SharedGame is a game another member of the account's Steam family owns
+// and shares with it.
+type SharedGame struct {
+	AppID  uint32
+	Name   string
+	Owners []uint64 // the family members who own it
+}
+
+// SharedGames lists the games the account's Steam family shares with it:
+// the other members' games it can play, not counting ones excluded from
+// sharing, or that aren't games. It's empty if the account isn't in a
+// family.
+func (s *Session) SharedGames(ctx context.Context) ([]SharedGame, error) {
+	who := new(steamauth.Encoder).Varint(1, s.cfg.SteamID)
+	resp, err := s.Call(ctx, "FamilyGroups.GetFamilyGroupForUser#1", who.Out())
+	if err != nil {
+		return nil, err
+	}
+	group := resp.Uint(1) // family_groupid
+	if group == 0 || resp.Bool(2) {
+		return nil, nil // not in a family
+	}
+	req := new(steamauth.Encoder).
+		Fixed64(1, group).
+		Bool(2, false). // not the account's own games
+		Bool(3, false). // not the ones excluded from sharing
+		String(5, "english").
+		Bool(7, false). // games only
+		Fixed64(8, s.cfg.SteamID)
+	resp, err = s.Call(ctx, "FamilyGroups.GetSharedLibraryApps#1", req.Out())
+	if err != nil {
+		return nil, err
+	}
+	var out []SharedGame
+	for _, a := range resp.Messages(1) {
+		if a.Int(10) != 0 { // exclude_reason: can't be borrowed
+			continue
+		}
+		g := SharedGame{AppID: uint32(a.Uint(1)), Name: strings.TrimSpace(a.Str(6))}
+		for _, o := range a.Uints(2) {
+			if o != s.cfg.SteamID {
+				g.Owners = append(g.Owners, o)
+			}
+		}
+		if g.AppID != 0 && len(g.Owners) > 0 {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }

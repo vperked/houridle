@@ -55,6 +55,6 @@ export default function LevelCard({ level, onOpen }) {
 
 // Steam colors level badges by tens; these are quieter versions.
 function levelTone(l) {
-  const tones = ["ring-faint", "ring-bad", "ring-warn", "ring-[#eab308]", "ring-good", "ring-accent", "ring-[#a78bfa]", "ring-[#ec4899]", "ring-[#92400e]", "ring-[#64748b]"];
+  const tones = ["ring-accent", "ring-bad", "ring-warn", "ring-[#eab308]", "ring-good", "ring-accent", "ring-[#a78bfa]", "ring-[#ec4899]", "ring-[#92400e]", "ring-[#64748b]"];
   return tones[Math.floor(l / 10) % 10];
 }

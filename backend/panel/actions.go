@@ -83,7 +83,7 @@ func (c *Controller) Library(ctx context.Context) ([]web.LibraryGame, error) {
 				if name == "" {
 					name = steam.PlaceholderName(g.AppID)
 				}
-				out = append(out, web.LibraryGame{AppID: g.AppID, Name: name, Minutes: g.Minutes})
+				out = append(out, web.LibraryGame{AppID: g.AppID, Name: name, Minutes: g.Minutes, Shared: g.Shared})
 			}
 			return err
 		})

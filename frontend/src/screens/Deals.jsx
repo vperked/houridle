@@ -58,7 +58,7 @@ export default function Deals({ signedIn }) {
   const loading = busy === "load";
   return (
     <>
-      {res ? <WalletCard {...res} busy={capBusy} onCap={(c) => setCap(c, res.currency)} /> : <div className="surface h-[124px] animate-pulse" />}
+      {res ? <WalletCard {...res} busy={capBusy} onCap={(c) => setCap(c, res.currency)} /> : <div className="surface shimmer h-[124px]" />}
 
       <section>
         <h2 className="heading">Price up to</h2>

@@ -229,7 +229,8 @@ function GamePicker({ source, picked, onChange, max, signedIn }) {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px]">{g.name}</span>
                       <span className="sub block truncate text-[13px]">
-                        {g.minutes ? hours(g.minutes * 60) : "Never played"}
+                        {g.shared ? <span className="text-accent">Family · </span> : null}
+                        {g.minutes ? hours(g.minutes * 60) : g.shared ? "Shared with you" : "Never played"}
                         {d > 0 && <span className="text-accent"> · {d} card drop{d === 1 ? "" : "s"}</span>}
                       </span>
                     </span>

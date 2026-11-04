@@ -100,6 +100,7 @@ function GameList({ source, onPick, drips }) {
                     <button type="button" onClick={() => onPick(g)} className="row row-tap">
                       <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
                       <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                      {g.shared && <Badge>Family</Badge>}
                       <Icon name="chevron" className="faint size-4" strokeWidth={2.2} />
                     </button>
                   )}
