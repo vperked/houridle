@@ -325,3 +325,20 @@ func TestACallCanBeCancelled(t *testing.T) {
 		t.Logf("answered before the cancel was seen: %v", err)
 	}
 }
+
+func TestLogonSendsTheAccountNameOnlyWhenKnown(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, name := range []string{"", "alice"} {
+		s, err := steamcm.Connect(ctx, steamcm.Config{SteamID: alice, AccountName: name, RefreshToken: fakeToken(alice, "client", farFuture)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+	logons := cm.messages(5514)
+	if len(logons) != 2 || logons[0].Body.Has(50) || logons[1].Body.Str(50) != "alice" {
+		t.Errorf("account_name handling is wrong: %d logons, first has=%v", len(logons), logons[0].Body.Has(50))
+	}
+}

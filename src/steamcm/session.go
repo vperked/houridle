@@ -22,6 +22,7 @@ const (
 // Config is who to sign in as.
 type Config struct {
 	SteamID      uint64
+	AccountName  string // optional; sent along with the token like Steam's own client does
 	RefreshToken string // a secret; never logged or printed here
 	MachineName  string
 
@@ -116,6 +117,9 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 		String(96, machine).
 		Bool(102, true).
 		String(108, cfg.RefreshToken)
+	if cfg.AccountName != "" {
+		req.String(50, cfg.AccountName)
+	}
 	if err := c.send(ctx, emsgClientLogon, header{steamID: cfg.SteamID}, req.Out()); err != nil {
 		s.finish(err)
 		return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)

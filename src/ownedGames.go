@@ -32,11 +32,11 @@ func loadOwnedGames(mgr *steamauth.Manager, library map[uint32]*steam.Game) erro
 	ctx, cancel := context.WithTimeout(context.Background(), ownedGamesTimeout)
 	defer cancel()
 
-	cs, err := steamcm.Connect(ctx, steamcm.Config{SteamID: sess.SteamID, RefreshToken: sess.RefreshToken})
+	cs, err := steamcm.Connect(ctx, steamcm.Config{SteamID: sess.SteamID, AccountName: sess.AccountName, RefreshToken: sess.RefreshToken})
 	if err != nil {
 		var le *steamcm.LogonError
 		if errors.As(err, &le) && le.AuthFailed() {
-			return steamauth.ErrSessionExpired
+			return fmt.Errorf("Steam refused the saved sign-in: %w. Run houridle status for details, or houridle login again", err)
 		}
 		return err
 	}

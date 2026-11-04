@@ -31,7 +31,7 @@ import (
 	"houridle/src/ui"
 )
 
-const version = "1.4.1"
+const version = "1.4.2"
 
 func main() {
 	os.Exit(run())

@@ -327,8 +327,14 @@ func runStatus(args []string) int {
 	default:
 		ui.Field("account", describe(sess))
 		ui.Field("steamid64", steamauth.FormatSteamID(sess.SteamID))
+		if info, perr := steamauth.ParseToken(sess.RefreshToken); perr == nil {
+			ui.Field("token", fmt.Sprintf("for %s, good until %s", strings.Join(info.Audience, ", "), info.Expires.Format("2006-01-02")))
+		}
 		_, rerr := mgr.Refresh(ctx)
 		exit = reportSession(mgr, rerr)
+		if code, checked := checkConnection(ctx, sess); checked {
+			exit = code // the connection to Steam's servers is the real test
+		}
 	}
 
 	if serr := <-network; serr == nil {
@@ -345,6 +351,34 @@ func runStatus(args []string) int {
 	return exit
 }
 
+// checkConnection signs in to Steam's servers with the saved sign-in, the
+// same way idling does, and reports what Steam says. It is skipped while
+// houridle is idling, since a second connection would knock that one off.
+// checked is false if it was skipped or Steam couldn't be reached.
+func checkConnection(ctx context.Context, sess steamauth.Session) (exit int, checked bool) {
+	if handover.Idling() {
+		ui.Field("connection", ui.Dim("houridle is idling, so its connection is the check"))
+		return 0, false
+	}
+	cs, err := steamcm.Connect(ctx, steamcm.Config{SteamID: sess.SteamID, AccountName: sess.AccountName, RefreshToken: sess.RefreshToken})
+	switch {
+	case err == nil:
+		cs.Close()
+		ui.Field("connection", ui.Good("signed in to Steam's servers"))
+		return 0, true
+	case errors.Is(err, steamauth.ErrNetwork):
+		ui.Field("connection", ui.Dim("couldn't check: "+err.Error()))
+		return 0, false
+	}
+	hint := ""
+	var le *steamcm.LogonError
+	if errors.As(err, &le) && le.AuthFailed() {
+		hint = "  run: houridle login"
+	}
+	ui.Field("connection", ui.Bad("Steam refused the sign-in: "+err.Error())+ui.Dim(hint))
+	return 1, true
+}
+
 // reportSession prints the result of checking the saved session with Steam
 // and returns the exit code for it.
 func reportSession(mgr *steamauth.Manager, err error) int {
@@ -354,7 +388,7 @@ func reportSession(mgr *steamauth.Manager, err error) int {
 		ui.Field("sign-in", ui.Good("valid")+ui.Dim("  "+expiryText(sess)))
 		return 0
 	case errors.As(err, new(*steamauth.RejectedError)):
-		ui.Field("sign-in", ui.Dim("saved, but Steam's web check refused it ("+err.Error()+"). houridle start will say for sure"))
+		ui.Field("web check", ui.Dim(err.Error()+" (not conclusive; the connection check below decides)"))
 		return 0
 	case errors.Is(err, steamauth.ErrSessionExpired):
 		ui.Field("sign-in", ui.Bad("expired or revoked")+ui.Dim("  run: houridle login"))

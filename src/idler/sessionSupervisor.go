@@ -169,6 +169,7 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 
 	cs, err := steamcm.Connect(ctx, steamcm.Config{
 		SteamID:      sess.SteamID,
+		AccountName:  sess.AccountName,
 		RefreshToken: sess.RefreshToken,
 		OnPlaying:    s.onPlaying,
 	})
@@ -234,7 +235,7 @@ func (s *SessionSupervisor) connectFailed(ctx context.Context, err error) time.D
 	switch {
 	case errors.As(err, &le) && le.AuthFailed():
 		s.setState(StateFailing, sessionNoteLogin)
-		s.warn(EventBad, "Steam no longer accepts the saved sign-in. Run houridle login again. Checking every minute.")
+		s.warn(EventBad, fmt.Sprintf("Steam no longer accepts the saved sign-in (error %d). Run houridle login again. Checking every minute.", le.EResult))
 		return retryAfterLogin
 	case errors.As(err, &le) && le.RateLimited():
 		s.setState(StateWaiting, "rate limited")
