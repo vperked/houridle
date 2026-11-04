@@ -31,7 +31,7 @@ import (
 	"houridle/src/ui"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 func main() {
 	os.Exit(run())
@@ -170,9 +170,13 @@ func checkSession() (*steamauth.Manager, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	sess, err := mgr.Refresh(ctx)
+	var rejected *steamauth.RejectedError
 	switch {
 	case errors.Is(err, steamauth.ErrNetwork):
 		ui.Warn("Can't reach Steam right now; will keep trying")
+	case errors.As(err, &rejected):
+		// Steam's web check isn't the last word; the connection decides.
+		ui.Warn(rejected.Error() + "; trying the connection anyway")
 	case err != nil:
 		return nil, err
 	}

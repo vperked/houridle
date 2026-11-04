@@ -148,9 +148,13 @@ func (s *SessionSupervisor) currentNote() string {
 // the default backoff); connected says whether we got signed in.
 func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, connected bool) {
 	sess, err := s.mgr.Refresh(ctx)
+	var rejected *steamauth.RejectedError
 	switch {
 	case ctx.Err() != nil:
 		return 0, false
+	case errors.As(err, &rejected):
+		// Only Steam's web check said no. Connecting is the real test.
+		s.warn(EventWarn, rejected.Error()+"; trying the connection anyway")
 	case errors.Is(err, steamauth.ErrNotLoggedIn), errors.Is(err, steamauth.ErrCorrupt), errors.Is(err, steamauth.ErrSessionExpired):
 		s.setState(StateFailing, sessionNoteLogin)
 		s.warn(EventBad, err.Error()+". Checking again every minute.")

@@ -208,7 +208,8 @@ func TestSessionSupervisorIdlesWithTheSavedSignIn(t *testing.T) {
 }
 
 func TestSessionSupervisorReportsARevokedSignIn(t *testing.T) {
-	newFakeCM(t, alice, 1)
+	// Both Steam's web check and the connection refuse the token.
+	newFakeCM(t, alice, 15)
 	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: steamauth.EResultAccessDenied} })
 	mgr := managerWith(t, api, aliceSession())
 
@@ -218,15 +219,38 @@ func TestSessionSupervisorReportsARevokedSignIn(t *testing.T) {
 	sup.Start(ctx)
 	defer func() { cancel(); sup.Wait() }()
 
-	select {
-	case e := <-events:
-		if e.Level != idler.EventBad || !strings.Contains(e.Text, "houridle login") {
-			t.Errorf("event: %+v", e)
+	var bad idler.Event
+	deadline := time.After(5 * time.Second)
+	for bad.Text == "" {
+		select {
+		case e := <-events:
+			if e.Level == idler.EventBad {
+				bad = e
+			}
+		case <-deadline:
+			t.Fatal("no error event")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no event")
+	}
+	if !strings.Contains(bad.Text, "houridle login") {
+		t.Errorf("event: %+v", bad)
 	}
 	if v := sup.Views()[0]; v.State != idler.StateFailing || v.Note == "" {
 		t.Errorf("view: %+v", v)
 	}
+}
+
+// Steam's web check can say no (error 63 was seen in the wild) while the
+// connection accepts the very same token. The connection decides.
+func TestSessionSupervisorIdlesWhenOnlyTheWebCheckRefuses(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: 63} })
+	mgr := managerWith(t, api, aliceSession())
+	sup := idler.NewSession([]*steam.Game{{AppID: 730, Name: "CS"}}, mgr, func(idler.Event) {})
+	ctx, cancel := context.WithCancel(context.Background())
+	sup.Start(ctx)
+	defer func() { cancel(); sup.Wait() }()
+	if got := <-cm.gotGames; len(got) != 1 || got[0] != 730 {
+		t.Fatalf("Steam was told %v", got)
+	}
+	waitFor(t, "idling", func() bool { return sup.Views()[0].State == idler.StateIdling })
 }

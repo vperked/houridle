@@ -80,8 +80,9 @@ func (m *Manager) Refresh(ctx context.Context) (Session, error) {
 		_, renewed, err = m.Client.AccessToken(ctx, sess.RefreshToken, sess.SteamID, false)
 	}
 	if err != nil {
-		if rejected(err) {
-			return sess, ErrSessionExpired
+		var se *Error
+		if rejected(err) && errors.As(err, &se) {
+			return sess, &RejectedError{EResult: se.EResult}
 		}
 		return sess, err
 	}
@@ -101,6 +102,19 @@ func (m *Manager) Refresh(ctx context.Context) (Session, error) {
 	}
 	return sess, nil
 }
+
+// RejectedError is Steam's web service refusing the check of the saved
+// token. It counts as ErrSessionExpired, but it is not the last word: the
+// connection to Steam's servers decides whether the token really works, so
+// callers that are about to connect can carry on and let that say.
+type RejectedError struct{ EResult int }
+
+func (e *RejectedError) Error() string {
+	return fmt.Sprintf("Steam's web check refused the saved sign-in (%s, error %d)", EResultText(e.EResult), e.EResult)
+}
+
+// Is makes errors.Is(err, ErrSessionExpired) true.
+func (e *RejectedError) Is(target error) bool { return target == ErrSessionExpired }
 
 // ErrDifferentAccount is returned by Remember when a different account is
 // already saved and the caller didn't agree to replace it.

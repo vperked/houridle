@@ -314,6 +314,7 @@ func runStatus(args []string) int {
 	}()
 
 	fmt.Println()
+	ui.Field("houridle", "v"+version)
 	exit := 0
 	sess, err := mgr.Current()
 	switch {
@@ -351,6 +352,9 @@ func reportSession(mgr *steamauth.Manager, err error) int {
 	case err == nil:
 		sess, _ := mgr.Current()
 		ui.Field("sign-in", ui.Good("valid")+ui.Dim("  "+expiryText(sess)))
+		return 0
+	case errors.As(err, new(*steamauth.RejectedError)):
+		ui.Field("sign-in", ui.Dim("saved, but Steam's web check refused it ("+err.Error()+"). houridle start will say for sure"))
 		return 0
 	case errors.Is(err, steamauth.ErrSessionExpired):
 		ui.Field("sign-in", ui.Bad("expired or revoked")+ui.Dim("  run: houridle login"))
