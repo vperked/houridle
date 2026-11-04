@@ -27,7 +27,6 @@ import (
 const (
 	emsgMulti               = 1
 	emsgClientHeartBeat     = 703
-	emsgClientLogOff        = 706
 	emsgClientGamesPlayed   = 742
 	emsgClientLogOnResponse = 751
 	emsgClientLoggedOff     = 757
@@ -118,8 +117,7 @@ func dial(ctx context.Context, url string) (*conn, error) {
 }
 
 // close drops the connection at once. A polite websocket close handshake can
-// wait seconds for a slow server; Steam already got a LogOff message, so
-// shutdown (Ctrl+C) never waits on it.
+// wait seconds for a slow server, so shutdown (Ctrl+C) never waits on it.
 func (c *conn) close() { c.ws.CloseNow() }
 
 // header holds the message header fields houridle sets.

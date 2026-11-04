@@ -446,3 +446,27 @@ func TestBusySteamIsNotRetriedAcrossServers(t *testing.T) {
 		t.Errorf("hammering a rate-limiting Steam makes it worse; tried %d times", n)
 	}
 }
+
+// A LogOff makes Steam end the saved token for good (it counts as signing
+// out), so closing a session may only drop the connection.
+func TestClosingNeverSignsTheTokenOut(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetGames([]uint32{730})
+	<-cm.gotGames
+	s.Close()
+	waitFor(t, "the games to be cleared", func() bool { return len(cm.messages(742)) == 2 })
+	time.Sleep(200 * time.Millisecond)
+	if n := len(cm.messages(706)); n != 0 {
+		t.Fatalf("Close sent %d LogOff message(s); that revokes the saved sign-in", n)
+	}
+	// And the same token still works afterwards.
+	again, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.Close()
+}

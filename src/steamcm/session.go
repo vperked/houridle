@@ -348,7 +348,12 @@ func (s *Session) finish(err error) {
 	})
 }
 
-// Close stops the games, signs out and disconnects.
+// Close stops the games and disconnects.
+//
+// It deliberately does NOT send Steam a LogOff message. For a sign-in made
+// with a saved token, LogOff means "sign out": Steam ends that token for
+// good, and the next start is refused with "access denied" until you log in
+// again. Just dropping the connection leaves the token alone.
 func (s *Session) Close() {
 	select {
 	case <-s.done:
@@ -356,6 +361,5 @@ func (s *Session) Close() {
 	default:
 	}
 	s.send(emsgClientGamesPlayed, gamesPlayedBody(nil))
-	s.send(emsgClientLogOff, nil)
 	s.finish(nil)
 }
