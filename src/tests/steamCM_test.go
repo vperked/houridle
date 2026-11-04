@@ -254,3 +254,74 @@ func TestSessionSupervisorIdlesWhenOnlyTheWebCheckRefuses(t *testing.T) {
 	}
 	waitFor(t, "idling", func() bool { return sup.Views()[0].State == idler.StateIdling })
 }
+
+// ---------- listing the games an account owns ----------
+
+func TestOwnedGamesComeBackMostPlayedFirst(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.owned = []fakeGame{{730, "Counter-Strike 2", 120}, {440, "Team Fortress 2", 6000}, {570, "", 0}, {-1, "bad", 1}}
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	games, err := s.OwnedGames(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 3 || games[0].AppID != 440 || games[0].Name != "Team Fortress 2" || games[0].Minutes != 6000 || games[2].AppID != 570 {
+		t.Errorf("games: %+v", games)
+	}
+	if got := cm.calls; len(got) != 1 || got[0] != "Player.GetOwnedGames#1" {
+		t.Errorf("service calls: %v", got)
+	}
+}
+
+func TestOwnedGamesReportsSteamRefusing(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.callErr = steamauth.EResultAccessDenied
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.OwnedGames(context.Background())
+	var se *steamauth.Error
+	if !errors.As(err, &se) || se.EResult != steamauth.EResultAccessDenied {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestACallEndsWhenTheConnectionDrops(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cm.mu.Lock()
+	cm.conn.CloseNow()
+	cm.mu.Unlock()
+	start := time.Now()
+	if _, err := s.OwnedGames(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("a dropped connection should end the call quickly, not wait for the timeout")
+	}
+}
+
+func TestACallCanBeCancelled(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Call(ctx, "Nothing.AtAll#1", nil); !errors.Is(err, context.Canceled) {
+		// The fake answers instantly, so either outcome is fine: no hang.
+		t.Logf("answered before the cancel was seen: %v", err)
+	}
+}

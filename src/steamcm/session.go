@@ -72,6 +72,9 @@ type Session struct {
 	mu      sync.Mutex
 	games   []uint32
 	blocked bool
+
+	jobs    map[uint64]chan Message // requests waiting for a reply, by job ID
+	nextJob uint64
 }
 
 // Connect signs in with the refresh token and returns once Steam accepts it.
@@ -88,13 +91,13 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{c: c, cfg: cfg, done: make(chan struct{})}
+	s := &Session{c: c, cfg: cfg, done: make(chan struct{}), jobs: map[uint64]chan Message{}}
 
 	logon := make(chan Message, 1)
 	go s.readLoop(logon)
 
 	hello := new(steamauth.Encoder).Varint(1, protocolVersion).Out()
-	if err := c.send(ctx, emsgClientHello, 0, 0, hello); err != nil {
+	if err := c.send(ctx, emsgClientHello, header{}, hello); err != nil {
 		s.finish(err)
 		return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
 	}
@@ -113,7 +116,7 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 		String(96, machine).
 		Bool(102, true).
 		String(108, cfg.RefreshToken)
-	if err := c.send(ctx, emsgClientLogon, cfg.SteamID, 0, req.Out()); err != nil {
+	if err := c.send(ctx, emsgClientLogon, header{steamID: cfg.SteamID}, req.Out()); err != nil {
 		s.finish(err)
 		return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
 	}
@@ -187,6 +190,8 @@ func (s *Session) readLoop(logon chan<- Message) {
 				}
 				s.finish(&LoggedOffError{EResult: code})
 				return
+			case emsgServiceMethodResp:
+				s.deliver(m)
 			case emsgPlayingSessionState:
 				if d, err := steamauth.Decode(m.Body); err == nil {
 					s.setBlocked(d.Bool(2), uint32(d.Uint(3)))
@@ -234,7 +239,7 @@ func (s *Session) heartbeat(every time.Duration) {
 func (s *Session) send(emsg uint32, body []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := s.c.send(ctx, emsg, s.cfg.SteamID, s.sessionID, body)
+	err := s.c.send(ctx, emsg, header{steamID: s.cfg.SteamID, sessionID: s.sessionID}, body)
 	if err != nil {
 		s.finish(err)
 	}

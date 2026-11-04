@@ -68,6 +68,16 @@ func Confirm(prompt string) bool {
 	return answer == "y" || answer == "yes"
 }
 
+// ConfirmYes asks a yes/no question where Enter means yes.
+func ConfirmYes(prompt string) bool {
+	answer, err := ReadLine(prompt + muted(" [Y/n] "))
+	if err != nil {
+		return false
+	}
+	answer = strings.ToLower(answer)
+	return answer == "" || answer == "y" || answer == "yes"
+}
+
 // Success prints a green one-line result.
 func Success(msg string) { fmt.Println("  " + success("✓") + " " + msg) }
 

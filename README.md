@@ -62,7 +62,7 @@ You sign in once. houridle keeps a Steam *refresh token*, never your password, a
 - The sign-in is saved in your user config folder (`%AppData%\houridle` on Windows, `~/.config/houridle` on Linux). On Windows it is encrypted for your account with DPAPI; on Linux the file is readable only by you (mode 600). Tokens are never printed or written to `houridle.log`.
 - houridle only ever uses the account you signed in with. Signing in as a different account asks before replacing the saved one.
 - Steam lets one device play at a time. If you start a game on another device, `start` pauses and resumes when you stop; it never kicks you out of your own game.
-- `start` doesn't have the Steam client's list of installed games. Pick games with `houridle start -setup` if Steam is installed here, or pass app IDs (`houridle start 730 440`). `-achievements` and `-autostart` still use the Steam client.
+- With no Steam installed, `houridle start -setup` (or the first `start`) offers to load the games your Steam account owns, over the saved sign-in, and then shows the usual picker. `houridle start -list` does the same without asking. You can also pass app IDs (`houridle start 730 440`). `-achievements` and `-autostart` still use the Steam client.
 - `logout` removes the token from this computer. Steam may keep the token valid until it expires; sign out of all devices in your Steam security settings to end it everywhere.
 
 An app ID is the number in a game's Steam store link, like `store.steampowered.com/app/730`.

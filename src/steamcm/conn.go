@@ -35,6 +35,8 @@ const (
 	emsgPlayingSessionState = 9600
 	emsgKickPlayingSession  = 9601
 	emsgClientHello         = 9805
+	emsgServiceMethodCall   = 151
+	emsgServiceMethodResp   = 147
 
 	protoMask = 0x80000000
 )
@@ -139,21 +141,35 @@ func dial(ctx context.Context, url string) (*conn, error) {
 // shutdown (Ctrl+C) never waits on it.
 func (c *conn) close() { c.ws.CloseNow() }
 
-// send writes one protobuf message with the given header fields.
-func (c *conn) send(ctx context.Context, emsg uint32, steamID uint64, sessionID int32, body []byte) error {
-	hdr := new(steamauth.Encoder)
-	if steamID != 0 {
-		hdr.Fixed64(1, steamID)
-	}
-	if sessionID != 0 {
-		hdr.Varint(2, uint64(int64(sessionID)))
-	}
-	h := hdr.Out()
+// header holds the message header fields houridle sets.
+type header struct {
+	steamID   uint64
+	sessionID int32
+	jobSource uint64 // set on requests that expect a reply
+	jobName   string // service method, e.g. "Player.GetOwnedGames#1"
+}
 
-	buf := make([]byte, 8, 8+len(h)+len(body))
+// send writes one protobuf message.
+func (c *conn) send(ctx context.Context, emsg uint32, h header, body []byte) error {
+	enc := new(steamauth.Encoder)
+	if h.steamID != 0 {
+		enc.Fixed64(1, h.steamID)
+	}
+	if h.sessionID != 0 {
+		enc.Varint(2, uint64(int64(h.sessionID)))
+	}
+	if h.jobSource != 0 {
+		enc.Fixed64(10, h.jobSource)
+	}
+	if h.jobName != "" {
+		enc.String(12, h.jobName)
+	}
+	hb := enc.Out()
+
+	buf := make([]byte, 8, 8+len(hb)+len(body))
 	binary.LittleEndian.PutUint32(buf[0:], emsg|protoMask)
-	binary.LittleEndian.PutUint32(buf[4:], uint32(len(h)))
-	buf = append(append(buf, h...), body...)
+	binary.LittleEndian.PutUint32(buf[4:], uint32(len(hb)))
+	buf = append(append(buf, hb...), body...)
 	return c.ws.Write(ctx, websocket.MessageBinary, buf)
 }
 

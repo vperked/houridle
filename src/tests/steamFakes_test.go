@@ -166,6 +166,9 @@ type fakeCM struct {
 	got      []received
 	conn     *websocket.Conn
 	gotGames chan []uint64
+	calls    []string // service methods asked for
+	owned    []fakeGame
+	callErr  int // eresult to answer service calls with (0 = fine)
 }
 
 // newFakeCM starts the server and points houridle at it for this test.
@@ -219,6 +222,11 @@ func (f *fakeCM) serve(w http.ResponseWriter, r *http.Request) {
 			reply := frame(751, f.answerAs, f.sessionID, resp)
 			// Batched and compressed, like the real thing.
 			ws.Write(ctx, websocket.MessageBinary, multi(reply))
+		case 151: // a service method call
+			f.mu.Lock()
+			f.calls = append(f.calls, hdr.Str(12))
+			f.mu.Unlock()
+			ws.Write(ctx, websocket.MessageBinary, f.answerCall(hdr, body))
 		case 742: // ClientGamesPlayed
 			var ids []uint64
 			for _, g := range body.Messages(1) {
@@ -249,4 +257,34 @@ func (f *fakeCM) push(emsg uint32, body []byte) {
 	ws := f.conn
 	f.mu.Unlock()
 	ws.Write(context.Background(), websocket.MessageBinary, frame(emsg, alice, f.sessionID, body))
+}
+
+type fakeGame struct {
+	ID      int
+	Name    string
+	Minutes int
+}
+
+// answerCall builds Steam's reply to a service call: the header carries the
+// job it answers and the result, the body the data.
+func (f *fakeCM) answerCall(req, body *steamauth.Decoded) []byte {
+	hdr := new(steamauth.Encoder).Fixed64(1, alice).Varint(2, uint64(f.sessionID)).Fixed64(11, req.Uint(10))
+	result := uint64(1)
+	if f.callErr != 0 {
+		result = uint64(f.callErr)
+	}
+	hdr.Varint(13, result)
+
+	resp := new(steamauth.Encoder)
+	if req.Str(12) == "Player.GetOwnedGames#1" && body.Uint(1) == alice && body.Bool(2) {
+		resp.Varint(1, uint64(len(f.owned)))
+		for _, g := range f.owned {
+			resp.Message(2, new(steamauth.Encoder).Varint(1, uint64(g.ID)).String(2, g.Name).Varint(4, uint64(g.Minutes)))
+		}
+	}
+	h := hdr.Out()
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf, 147|0x80000000)
+	binary.LittleEndian.PutUint32(buf[4:], uint32(len(h)))
+	return append(append(buf, h...), resp.Out()...)
 }

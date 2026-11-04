@@ -31,7 +31,7 @@ import (
 	"houridle/src/ui"
 )
 
-const version = "1.4.0"
+const version = "1.4.1"
 
 func main() {
 	os.Exit(run())
@@ -106,8 +106,19 @@ func run() int {
 		library = steam.LocalGames(steamDir)
 	}
 
+	var loadOwned func() error // with a saved sign-in: fetch the account's games from Steam
+	if session != nil {
+		loadOwned = func() error { return loadOwnedGames(session, library) }
+	}
+
 	switch {
 	case *listFlag:
+		if loadOwned != nil && len(library) == 0 {
+			ui.Progress("Loading the games your Steam account owns")
+			if err := loadOwned(); err != nil {
+				return ui.Fatal(fmt.Errorf("couldn't load your games: %w", err))
+			}
+		}
 		ui.PrintGameList(library, strings.Join(flag.Args(), " "))
 		return 0
 	case *achievementsFlag:
@@ -116,7 +127,7 @@ func run() int {
 		return setAutostart(appDir, steamDir, *libFlag, *autostartFlag)
 	}
 
-	appIDs, err := chooseGames(appDir, library, flag.Args(), *setupFlag)
+	appIDs, err := chooseGames(appDir, library, flag.Args(), *setupFlag, loadOwned)
 	if errors.Is(err, ui.ErrCancelled) {
 		ui.Notice("cancelled, nothing changed")
 		return 0
@@ -214,7 +225,10 @@ func chooseStopTime(stopFlag string) (time.Time, error) {
 
 // chooseGames returns the app IDs to idle: from the command line, config.json,
 // or the picker (whose result is saved).
-func chooseGames(appDir string, library map[uint32]*steam.Game, args []string, forceSetup bool) ([]uint32, error) {
+//
+// loadOwned, when not nil, can fill library from the Steam account (used when
+// this computer has no Steam to read the games from).
+func chooseGames(appDir string, library map[uint32]*steam.Game, args []string, forceSetup bool, loadOwned func() error) ([]uint32, error) {
 	var appIDs []uint32
 	if len(args) > 0 {
 		var err error
@@ -234,6 +248,14 @@ func chooseGames(appDir string, library map[uint32]*steam.Game, args []string, f
 		if !ui.CanPrompt() {
 			// e.g. started by Windows at sign-in, or by systemd: nobody to ask.
 			return nil, errors.New("no games to idle yet: run houridle -setup in a terminal first, or pass app IDs")
+		}
+		if len(library) == 0 && loadOwned != nil {
+			if ui.ConfirmYes("No Steam library on this computer. Load the games your Steam account owns?") {
+				ui.Progress("Loading your games from Steam")
+				if err := loadOwned(); err != nil {
+					return nil, fmt.Errorf("couldn't load your games: %w", err)
+				}
+			}
 		}
 		if len(library) == 0 {
 			return nil, errors.New("no games to pick from on this computer: pass app IDs (houridle start 730 440), or install Steam here to choose from your library")
