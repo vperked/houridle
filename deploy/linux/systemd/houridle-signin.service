@@ -1,0 +1,19 @@
+# houridle as a control panel, idling with the sign-in saved by "houridle
+# login": no Steam client, no virtual display. Everything (games, options,
+# accounts) is done from its web page ("houridle web" shows the link), and
+# it carries on where it left off after a reboot.
+# setup-signin.sh fills in INSTALL_DIR and TARGET.
+[Unit]
+Description=houridle: Steam hour idler (saved sign-in)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+WorkingDirectory=INSTALL_DIR
+ExecStart=INSTALL_DIR/houridle serve
+# Restart after a crash or an error, but not after Quit on the page.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=TARGET

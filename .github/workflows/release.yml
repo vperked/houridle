@@ -1,0 +1,35 @@
+# On a version tag (v1.6.0), builds houridle for Windows and Linux with the
+# version from the tag, and attaches the binaries to a GitHub release.
+#   git tag v1.6.0 && git push origin v1.6.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          flags="-s -w -X main.version=$version"
+          mkdir dist
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle.exe ./backend
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-amd64 ./backend
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-arm64 ./backend
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "houridle $GITHUB_REF_NAME" --generate-notes

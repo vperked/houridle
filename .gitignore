@@ -1,32 +1,60 @@
-# Build output
-*.exe
+# houridle's .gitignore. The built status page (backend/web/dist) IS
+# committed, so building houridle needs only Go.
+
+# ---- Builds ----
 /houridle
+/backend/houridle
+*.exe
 *.exe~
+*.exe.old
+houridle-linux-*
+houridle-darwin-*
+/dist/
 *.test
 *.out
-/dist/
 
-# Local, per-user files houridle creates next to the exe (or in src/ under `go run`)
+# ---- Your own files, which houridle keeps next to itself ----
+# They hold secrets (the page's key, a webhook, a GitHub token) or are
+# personal (hours history, what's been spent). Sign-ins are kept elsewhere,
+# in your user config folder, never in this repository.
 config.json
+config.json.*.tmp
+history.json
+history-*.json
+*.json.bad
+steam-settings.json
+cm-servers.json
+.houridle-update-*
 steam_api64.dll
+libsteam_api.so
 
-# Go tooling
+# ---- Logs ----
+*.log
+*.log.[0-9]
+npm-debug.log*
+
+# ---- Secrets that should never be committed ----
+.env
+.env.*
+*.pem
+*.key
+
+# ---- Frontend ----
+frontend/node_modules/
+frontend/.vite/
+*.local
+
+# ---- Go tooling ----
 coverage.*
 *.prof
 go.work
 go.work.sum
 
-# Logs
-*.log
-
-# Editors and OS
+# ---- Editors and OS ----
 .vscode/
 .idea/
 *.swp
+*~
+.DS_Store
 Thumbs.db
 desktop.ini
-.DS_Store
-
-# Activity log
-houridle.log
-houridle.log.1

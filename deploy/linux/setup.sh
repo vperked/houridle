@@ -29,7 +29,7 @@ find_binary() {
     fi
   done
   die "Couldn't find the houridle program. Build it with
-    GOOS=linux go build -o houridle ./src
+    GOOS=linux go build -o houridle ./backend
 then run: $0 path/to/houridle"
 }
 

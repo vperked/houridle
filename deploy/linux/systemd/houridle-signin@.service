@@ -1,0 +1,21 @@
+# One more saved Steam account, idling next to the default one, with the
+# old status page and its options on the command line:
+#   systemctl enable --now houridle-signin@<account name>
+# (the account name as "houridle accounts" shows it). Each account keeps
+# its own log, houridle-<account name>.log. (One control panel, the
+# houridle-signin service, can switch between accounts by itself.)
+[Unit]
+Description=houridle: Steam hour idler (account %i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+WorkingDirectory=INSTALL_DIR
+ExecStart=INSTALL_DIR/houridle start -account %i -stop never
+# Restart after a crash or an error, but not after a deliberate stop (the
+# status page's Stop button) or when -cards/-until finish.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=TARGET
