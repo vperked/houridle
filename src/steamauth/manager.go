@@ -86,10 +86,16 @@ func (m *Manager) Refresh(ctx context.Context) (Session, error) {
 		}
 		return sess, err
 	}
+	return m.Adopt(sess, renewed)
+}
+
+// Adopt saves a replacement refresh token Steam issued for sess, but only
+// if it is for the same account and can still sign in. An empty or
+// unchanged token is not an error: there is nothing to do.
+func (m *Manager) Adopt(sess Session, renewed string) (Session, error) {
 	if renewed == "" || renewed == sess.RefreshToken {
 		return sess, nil
 	}
-	// Steam issued a replacement. Keep it only if it is for the same account.
 	info, perr := ParseToken(renewed)
 	if perr != nil || info.SteamID != sess.SteamID || !info.CanLogOn() {
 		return sess, errors.New("Steam sent a replacement token for a different account; keeping the old one")

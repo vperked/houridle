@@ -109,3 +109,19 @@ func (s *Session) OwnedGames(ctx context.Context) ([]OwnedGame, error) {
 	slices.SortFunc(out, func(a, b OwnedGame) int { return b.Minutes - a.Minutes })
 	return out, nil
 }
+
+// RenewRefreshToken asks Steam, over this signed-in connection, for a
+// replacement for the refresh token. Steam's web service doesn't accept
+// this kind of token, but its servers do. The result is empty when Steam
+// decides the token doesn't need replacing yet.
+func (s *Session) RenewRefreshToken(ctx context.Context) (string, error) {
+	req := new(steamauth.Encoder).
+		String(1, s.cfg.RefreshToken).
+		Fixed64(2, s.cfg.SteamID).
+		Varint(3, 1) // allow renewal
+	resp, err := s.Call(ctx, "Authentication.GenerateAccessTokenForApp#1", req.Out())
+	if err != nil {
+		return "", err
+	}
+	return resp.Str(2), nil
+}

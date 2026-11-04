@@ -168,7 +168,8 @@ type fakeCM struct {
 	gotGames chan []uint64
 	calls    []string // service methods asked for
 	owned    []fakeGame
-	callErr  int // eresult to answer service calls with (0 = fine)
+	callErr  int    // eresult to answer service calls with (0 = fine)
+	renewTo  string // refresh token to hand out when asked to renew
 }
 
 // newFakeCM starts the server and points houridle at it for this test.
@@ -281,6 +282,9 @@ func (f *fakeCM) answerCall(req, body *steamauth.Decoded) []byte {
 		for _, g := range f.owned {
 			resp.Message(2, new(steamauth.Encoder).Varint(1, uint64(g.ID)).String(2, g.Name).Varint(4, uint64(g.Minutes)))
 		}
+	}
+	if req.Str(12) == "Authentication.GenerateAccessTokenForApp#1" && body.Uint(2) == alice && body.Uint(3) == 1 && f.renewTo != "" {
+		resp.String(1, "access").String(2, f.renewTo)
 	}
 	h := hdr.Out()
 	buf := make([]byte, 8)

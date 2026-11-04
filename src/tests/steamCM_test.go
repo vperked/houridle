@@ -342,3 +342,81 @@ func TestLogonSendsTheAccountNameOnlyWhenKnown(t *testing.T) {
 		t.Errorf("account_name handling is wrong: %d logons, first has=%v", len(logons), logons[0].Body.Has(50))
 	}
 }
+
+// ---------- keeping the sign-in alive on long runs ----------
+
+func nearlyExpiredSession() steamauth.Session {
+	s := aliceSession()
+	soon := time.Now().Add(10 * 24 * time.Hour).Unix()
+	s.RefreshToken = fakeToken(alice, "client", soon)
+	return s
+}
+
+func runSupervisor(t *testing.T, cm *fakeCM, mgr *steamauth.Manager) chan idler.Event {
+	t.Helper()
+	events := make(chan idler.Event, 32)
+	sup := idler.NewSession([]*steam.Game{{AppID: 730, Name: "CS"}}, mgr, func(e idler.Event) { events <- e })
+	ctx, cancel := context.WithCancel(context.Background())
+	sup.Start(ctx)
+	t.Cleanup(func() { cancel(); sup.Wait() })
+	<-cm.gotGames
+	waitFor(t, "idling", func() bool { return sup.Views()[0].State == idler.StateIdling })
+	return events
+}
+
+func TestSignInIsRenewedOverTheConnectionWhenNearlyExpired(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.renewTo = fakeToken(alice, "client", farFuture)
+	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: steamauth.EResultAccessDenied} })
+	mgr := managerWith(t, api, nearlyExpiredSession())
+	events := runSupervisor(t, cm, mgr)
+
+	waitFor(t, "the renewed token to be saved", func() bool {
+		s, err := mgr.Store.Load()
+		return err == nil && s.RefreshToken == cm.renewTo
+	})
+	var renewed bool
+	for len(events) > 0 {
+		e := <-events
+		renewed = renewed || strings.Contains(e.Text, "Renewed")
+		if strings.Contains(e.Text, "eyJ") {
+			t.Errorf("an event leaked a token: %q", e.Text)
+		}
+	}
+	if !renewed {
+		t.Error("the feed should say the sign-in was renewed")
+	}
+}
+
+func TestSignInWithPlentyOfTimeLeftIsNotTouched(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.renewTo = fakeToken(alice, "client", farFuture+5)
+	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: steamauth.EResultAccessDenied} })
+	saved := aliceSession()
+	saved.RefreshToken = fakeToken(alice, "client", time.Now().Add(150*24*time.Hour).Unix())
+	mgr := managerWith(t, api, saved)
+	runSupervisor(t, cm, mgr)
+	time.Sleep(200 * time.Millisecond)
+	if s, _ := mgr.Store.Load(); s.RefreshToken != saved.RefreshToken {
+		t.Error("a token with months left should be left alone")
+	}
+	for _, c := range cm.calls {
+		if strings.Contains(c, "GenerateAccessToken") {
+			t.Error("shouldn't have asked Steam to renew")
+		}
+	}
+}
+
+func TestRenewalToAnotherAccountIsRefused(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.renewTo = fakeToken(bob, "client", farFuture)
+	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: steamauth.EResultAccessDenied} })
+	saved := nearlyExpiredSession()
+	mgr := managerWith(t, api, saved)
+	events := runSupervisor(t, cm, mgr)
+	waitFor(t, "a warning", func() bool { return len(events) > 0 })
+	time.Sleep(200 * time.Millisecond)
+	if s, _ := mgr.Store.Load(); s.SteamID != alice || s.RefreshToken != saved.RefreshToken {
+		t.Fatal("bob's token must never replace alice's")
+	}
+}

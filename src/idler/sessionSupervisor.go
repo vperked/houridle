@@ -25,9 +25,10 @@ type Runner interface {
 const (
 	reconnectMin      = 5 * time.Second
 	reconnectMax      = 5 * time.Minute
-	retryAfterLogin   = time.Minute      // sign-in refused; maybe you ran houridle login since
-	retryAfterLimit   = 10 * time.Minute // Steam asked us to slow down
-	renewEvery        = 24 * time.Hour   // keep the saved token fresh on long runs
+	retryAfterLogin   = time.Minute         // sign-in refused; maybe you ran houridle login since
+	retryAfterLimit   = 10 * time.Minute    // Steam asked us to slow down
+	renewEvery        = 24 * time.Hour      // check the saved token on long runs
+	renewWithin       = 90 * 24 * time.Hour // renew when it has less than this left
 	sessionNoteLogin  = "sign in needed"
 	sessionNoteOnline = "offline"
 	sessionNoteInUse  = "in use elsewhere"
@@ -153,8 +154,8 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 	case ctx.Err() != nil:
 		return 0, false
 	case errors.As(err, &rejected):
-		// Only Steam's web check said no. Connecting is the real test.
-		s.warn(EventWarn, rejected.Error()+"; trying the connection anyway")
+		// Steam's web check doesn't take this kind of token (it says "denied"
+		// for good ones). Connecting is the real test, so say nothing yet.
 	case errors.Is(err, steamauth.ErrNotLoggedIn), errors.Is(err, steamauth.ErrCorrupt), errors.Is(err, steamauth.ErrSessionExpired):
 		s.setState(StateFailing, sessionNoteLogin)
 		s.warn(EventBad, err.Error()+". Checking again every minute.")
@@ -192,6 +193,7 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 		s.emit(EventGood, fmt.Sprintf("Signed in as %s, idling %d game(s)", accountLabel(sess), len(s.games)))
 	}
 
+	s.renewSignIn(ctx, cs, sess)
 	renew := time.NewTicker(renewEvery)
 	defer renew.Stop()
 	for {
@@ -199,12 +201,35 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 		case <-ctx.Done():
 			return 0, true
 		case <-renew.C:
-			if _, err := s.mgr.Refresh(ctx); err != nil && ctx.Err() == nil {
-				s.warn(EventWarn, "Couldn't renew the saved sign-in: "+err.Error())
+			if cur, err := s.mgr.Current(); err == nil {
+				s.renewSignIn(ctx, cs, cur)
 			}
 		case <-cs.Done():
 			return s.connectionLost(cs.Err()), true
 		}
+	}
+}
+
+// renewSignIn swaps in a fresh refresh token when the saved one is within
+// renewWithin of running out, so a long-running houridle never has to ask
+// for a new login. Failing is not a problem until the token really expires.
+func (s *SessionSupervisor) renewSignIn(ctx context.Context, cs *steamcm.Session, sess steamauth.Session) {
+	if !sess.Expires.IsZero() && time.Until(sess.Expires) > renewWithin {
+		return
+	}
+	token, err := cs.RenewRefreshToken(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.warn(EventWarn, "Couldn't renew the saved sign-in yet: "+err.Error())
+		}
+		return
+	}
+	updated, err := s.mgr.Adopt(sess, token)
+	switch {
+	case err != nil:
+		s.warn(EventWarn, err.Error())
+	case updated.RefreshToken != sess.RefreshToken:
+		s.emit(EventGood, "Renewed the saved sign-in, good until "+updated.Expires.Format("2006-01-02"))
 	}
 }
 
