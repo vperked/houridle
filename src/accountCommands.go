@@ -330,10 +330,14 @@ func runStatus(args []string) int {
 		if info, perr := steamauth.ParseToken(sess.RefreshToken); perr == nil {
 			ui.Field("token", fmt.Sprintf("for %s, good until %s", strings.Join(info.Audience, ", "), info.Expires.Format("2006-01-02")))
 		}
-		_, rerr := mgr.Refresh(ctx)
-		exit = reportSession(mgr, rerr)
+		if _, cerr := mgr.Current(); errors.Is(cerr, steamauth.ErrSessionExpired) {
+			ui.Field("sign-in", ui.Bad("expired")+ui.Dim("  run: houridle login"))
+			exit = 1
+		} else {
+			ui.Field("sign-in", ui.Dim(expiryText(sess)))
+		}
 		if code, checked := checkConnection(ctx, sess); checked {
-			exit = code // the connection to Steam's servers is the real test
+			exit = code // signing in to Steam's servers is the real test
 		}
 	}
 
@@ -379,35 +383,12 @@ func checkConnection(ctx context.Context, sess steamauth.Session) (exit int, che
 	return 1, true
 }
 
-// reportSession prints the result of checking the saved session with Steam
-// and returns the exit code for it.
-func reportSession(mgr *steamauth.Manager, err error) int {
-	switch {
-	case err == nil:
-		sess, _ := mgr.Current()
-		ui.Field("sign-in", ui.Good("valid")+ui.Dim("  "+expiryText(sess)))
-		return 0
-	case errors.As(err, new(*steamauth.RejectedError)):
-		ui.Field("web check", ui.Dim(err.Error()+" (not conclusive; the connection check below decides)"))
-		return 0
-	case errors.Is(err, steamauth.ErrSessionExpired):
-		ui.Field("sign-in", ui.Bad("expired or revoked")+ui.Dim("  run: houridle login"))
-		return 1
-	case errors.Is(err, steamauth.ErrNetwork):
-		ui.Field("sign-in", ui.Dim("saved, but couldn't check with Steam (offline?)"))
-		return 0
-	default:
-		ui.Field("sign-in", ui.Bad(err.Error()))
-		return 1
-	}
-}
-
 func expiryText(sess steamauth.Session) string {
 	if sess.Expires.IsZero() {
 		return ""
 	}
 	days := int(time.Until(sess.Expires).Hours() / 24)
-	return fmt.Sprintf("renews itself; token good for about %d more days", days)
+	return fmt.Sprintf("saved; renews itself while idling (about %d days left)", days)
 }
 
 // ---------- account ----------

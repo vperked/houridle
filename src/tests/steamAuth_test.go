@@ -307,90 +307,59 @@ func TestNetworkTroubleIsNotAnAuthFailure(t *testing.T) {
 
 // ---------- keeping the session fresh ----------
 
-func managerWith(t *testing.T, api *fakeAPI, saved steamauth.Session) *steamauth.Manager {
+func managerWith(t *testing.T, _ *fakeAPI, saved steamauth.Session) *steamauth.Manager {
 	t.Helper()
-	mgr := &steamauth.Manager{Client: api.client(), Store: newStore(t)}
+	mgr := &steamauth.Manager{Client: steamauth.NewClient(), Store: newStore(t)}
 	if err := mgr.Store.Save(saved); err != nil {
 		t.Fatal(err)
 	}
 	return mgr
 }
 
-func TestRefreshKeepsAGoodSession(t *testing.T) {
-	api := newFakeAPI(t, func(c apiCall) apiReply {
-		return apiReply{Body: new(steamauth.Encoder).String(1, "access").Out()}
-	})
-	mgr := managerWith(t, api, aliceSession())
-	sess, err := mgr.Refresh(context.Background())
-	if err != nil || sess.SteamID != alice {
-		t.Fatalf("%v %v", sess, err)
-	}
-	call := api.called("GenerateAccessTokenForApp")[0]
-	if call.Req.Uint(2) != alice {
-		t.Error("the refresh must name the account it is for")
-	}
-}
-
-func TestRefreshStoresARenewedToken(t *testing.T) {
-	renewed := fakeToken(alice, "client", farFuture+1000)
-	api := newFakeAPI(t, func(c apiCall) apiReply {
-		return apiReply{Body: new(steamauth.Encoder).String(1, "access").String(2, renewed).Out()}
-	})
-	mgr := managerWith(t, api, aliceSession())
-	if _, err := mgr.Refresh(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := mgr.Store.Load(); got.RefreshToken != renewed {
-		t.Error("the renewed token should have been saved")
-	}
-}
-
-func TestRefreshIgnoresARenewedTokenForAnotherAccount(t *testing.T) {
-	api := newFakeAPI(t, func(c apiCall) apiReply {
-		return apiReply{Body: new(steamauth.Encoder).String(1, "access").String(2, fakeToken(bob, "client", farFuture)).Out()}
-	})
-	saved := aliceSession()
-	mgr := managerWith(t, api, saved)
-	if _, err := mgr.Refresh(context.Background()); err == nil {
-		t.Error("expected a complaint about the mismatched token")
-	}
-	if got, _ := mgr.Store.Load(); got.SteamID != alice || got.RefreshToken != saved.RefreshToken {
-		t.Error("alice's session must be untouched")
-	}
-}
-
-func TestRefreshTellsRevokedFromOffline(t *testing.T) {
-	denied := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: steamauth.EResultAccessDenied} })
-	mgr := managerWith(t, denied, aliceSession())
-	if _, err := mgr.Refresh(context.Background()); !errors.Is(err, steamauth.ErrSessionExpired) {
-		t.Errorf("revoked token: got %v", err)
-	}
-
-	down := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{Status: 502} })
-	mgr = managerWith(t, down, aliceSession())
-	_, err := mgr.Refresh(context.Background())
-	if !errors.Is(err, steamauth.ErrNetwork) || errors.Is(err, steamauth.ErrSessionExpired) {
-		t.Errorf("Steam down: got %v", err)
-	}
-	if _, lerr := mgr.Store.Load(); lerr != nil {
-		t.Error("the saved session must survive a network failure")
-	}
-}
-
-func TestRefreshNeedsASession(t *testing.T) {
+func TestCurrentNeedsASession(t *testing.T) {
 	mgr := &steamauth.Manager{Client: steamauth.NewClient(), Store: newStore(t)}
-	if _, err := mgr.Refresh(context.Background()); !errors.Is(err, steamauth.ErrNotLoggedIn) {
+	if _, err := mgr.Current(); !errors.Is(err, steamauth.ErrNotLoggedIn) {
 		t.Errorf("got %v", err)
 	}
 }
 
 func TestExpiredTokenIsCaughtWithoutAskingSteam(t *testing.T) {
-	api := newFakeAPI(t, func(c apiCall) apiReply { t.Error("should not call Steam"); return apiReply{} })
 	saved := aliceSession()
 	saved.RefreshToken = fakeToken(alice, "client", 1000)
-	mgr := managerWith(t, api, saved)
-	if _, err := mgr.Refresh(context.Background()); !errors.Is(err, steamauth.ErrSessionExpired) {
+	mgr := managerWith(t, nil, saved)
+	if _, err := mgr.Current(); !errors.Is(err, steamauth.ErrSessionExpired) {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestAdoptStoresARenewedToken(t *testing.T) {
+	mgr := managerWith(t, nil, aliceSession())
+	renewed := fakeToken(alice, "client", farFuture+1000)
+	sess, _ := mgr.Current()
+	got, err := mgr.Adopt(sess, renewed)
+	if err != nil || got.RefreshToken != renewed {
+		t.Fatalf("%v %v", got, err)
+	}
+	if saved, _ := mgr.Store.Load(); saved.RefreshToken != renewed {
+		t.Error("the renewed token should have been saved")
+	}
+}
+
+func TestAdoptIgnoresNothingAndRefusesOtherAccounts(t *testing.T) {
+	mgr := managerWith(t, nil, aliceSession())
+	sess, _ := mgr.Current()
+	for _, same := range []string{"", sess.RefreshToken} {
+		if got, err := mgr.Adopt(sess, same); err != nil || got.RefreshToken != sess.RefreshToken {
+			t.Errorf("an empty or unchanged token is a no-op, got %v %v", got, err)
+		}
+	}
+	for _, bad := range []string{fakeToken(bob, "client", farFuture), fakeToken(alice, "web", farFuture), "junk"} {
+		if _, err := mgr.Adopt(sess, bad); err == nil {
+			t.Errorf("token %q must be refused", bad)
+		}
+	}
+	if saved, _ := mgr.Store.Load(); saved.RefreshToken != sess.RefreshToken || saved.SteamID != alice {
+		t.Error("alice's session must be untouched")
 	}
 }
 
@@ -472,39 +441,5 @@ func TestMenuChoice(t *testing.T) {
 		if got != c.want || ok != c.ok {
 			t.Errorf("ParseChoice(%q, %d) = %d, %v; want %d, %v", c.in, c.n, got, ok, c.want, c.ok)
 		}
-	}
-}
-
-func TestRefreshTreatsEveryRefusalAsSignInAgainExceptBusySteam(t *testing.T) {
-	for _, code := range []int{5, 8, 15, 26, 27, 63, 65, 85, 88} {
-		api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: code} })
-		mgr := managerWith(t, api, aliceSession())
-		if _, err := mgr.Refresh(context.Background()); !errors.Is(err, steamauth.ErrSessionExpired) {
-			t.Errorf("Steam error %d should mean sign in again, got %v", code, err)
-		}
-	}
-	for _, code := range []int{2, 3, 16, 20, 84, 87} {
-		api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: code} })
-		mgr := managerWith(t, api, aliceSession())
-		_, err := mgr.Refresh(context.Background())
-		if errors.Is(err, steamauth.ErrSessionExpired) || err == nil {
-			t.Errorf("Steam error %d is Steam being busy, not a rejected sign-in; got %v", code, err)
-		}
-	}
-}
-
-func TestRefreshSurvivesSteamRefusingOnlyTheRenewal(t *testing.T) {
-	api := newFakeAPI(t, func(c apiCall) apiReply {
-		if c.Req.Uint(3) != 0 { // asked to renew
-			return apiReply{EResult: 63}
-		}
-		return apiReply{Body: new(steamauth.Encoder).String(1, "access").Out()}
-	})
-	mgr := managerWith(t, api, aliceSession())
-	if _, err := mgr.Refresh(context.Background()); err != nil {
-		t.Fatalf("the token is fine without renewal: %v", err)
-	}
-	if n := len(api.called("GenerateAccessTokenForApp")); n != 2 {
-		t.Errorf("expected a renewal try and a plain try, got %d calls", n)
 	}
 }

@@ -162,14 +162,16 @@ type fakeCM struct {
 	answerAs  uint64
 	sessionID int32
 
-	mu       sync.Mutex
-	got      []received
-	conn     *websocket.Conn
-	gotGames chan []uint64
-	calls    []string // service methods asked for
-	owned    []fakeGame
-	callErr  int    // eresult to answer service calls with (0 = fine)
-	renewTo  string // refresh token to hand out when asked to renew
+	mu             sync.Mutex
+	got            []received
+	conn           *websocket.Conn
+	gotGames       chan []uint64
+	calls          []string // service methods asked for
+	owned          []fakeGame
+	callErr        int    // eresult to answer service calls with (0 = fine)
+	renewTo        string // refresh token to hand out when asked to renew
+	refuseFirstSet bool
+	refuseFirst    int // refuse this many sign-ins (with logonResult) before accepting
 }
 
 // newFakeCM starts the server and points houridle at it for this test.
@@ -181,6 +183,9 @@ func newFakeCM(t testing.TB, answerAs uint64, logonResult int) *fakeCM {
 	mux.HandleFunc("/dir", func(w http.ResponseWriter, r *http.Request) {
 		host := strings.TrimPrefix(f.URL, "http://")
 		json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"serverlist": []map[string]string{
+			{"endpoint": host, "type": "websockets"},
+			{"endpoint": host, "type": "websockets"},
+			{"endpoint": host, "type": "websockets"},
 			{"endpoint": host, "type": "websockets"},
 			{"endpoint": "ignored.example:1", "type": "netfilter"},
 		}}})
@@ -219,7 +224,18 @@ func (f *fakeCM) serve(w http.ResponseWriter, r *http.Request) {
 
 		switch emsg {
 		case 5514: // ClientLogon
-			resp := new(steamauth.Encoder).Varint(1, uint64(f.logonResult)).Varint(3, 1).Out()
+			result := f.logonResult
+			f.mu.Lock()
+			if f.refuseFirst > 0 {
+				f.refuseFirst--
+				if result == 1 {
+					result = 15
+				}
+			} else if f.refuseFirstSet {
+				result = 1
+			}
+			f.mu.Unlock()
+			resp := new(steamauth.Encoder).Varint(1, uint64(result)).Varint(3, 1).Out()
 			reply := frame(751, f.answerAs, f.sessionID, resp)
 			// Batched and compressed, like the real thing.
 			ws.Write(ctx, websocket.MessageBinary, multi(reply))

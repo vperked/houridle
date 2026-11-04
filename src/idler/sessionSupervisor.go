@@ -26,6 +26,7 @@ const (
 	reconnectMin      = 5 * time.Second
 	reconnectMax      = 5 * time.Minute
 	retryAfterLogin   = time.Minute         // sign-in refused; maybe you ran houridle login since
+	retryAfterRefused = 5 * time.Minute     // Steam refused the sign-in; each try is several attempts
 	retryAfterLimit   = 10 * time.Minute    // Steam asked us to slow down
 	renewEvery        = 24 * time.Hour      // check the saved token on long runs
 	renewWithin       = 90 * 24 * time.Hour // renew when it has less than this left
@@ -148,24 +149,17 @@ func (s *SessionSupervisor) currentNote() string {
 // connection ends. wait is how long to pause before the next attempt (0 for
 // the default backoff); connected says whether we got signed in.
 func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, connected bool) {
-	sess, err := s.mgr.Refresh(ctx)
-	var rejected *steamauth.RejectedError
+	sess, err := s.mgr.Current()
 	switch {
 	case ctx.Err() != nil:
 		return 0, false
-	case errors.As(err, &rejected):
-		// Steam's web check doesn't take this kind of token (it says "denied"
-		// for good ones). Connecting is the real test, so say nothing yet.
 	case errors.Is(err, steamauth.ErrNotLoggedIn), errors.Is(err, steamauth.ErrCorrupt), errors.Is(err, steamauth.ErrSessionExpired):
 		s.setState(StateFailing, sessionNoteLogin)
 		s.warn(EventBad, err.Error()+". Checking again every minute.")
 		return retryAfterLogin, false
-	case errors.Is(err, steamauth.ErrNetwork):
-		// Steam can't be reached to renew the token; the saved one may still
-		// work, so carry on and let the connection attempt decide.
-		s.warn(EventWarn, "Can't reach Steam to check the saved sign-in; trying anyway")
 	case err != nil:
 		s.warn(EventWarn, err.Error())
+		return 0, false
 	}
 
 	cs, err := steamcm.Connect(ctx, steamcm.Config{
@@ -260,8 +254,8 @@ func (s *SessionSupervisor) connectFailed(ctx context.Context, err error) time.D
 	switch {
 	case errors.As(err, &le) && le.AuthFailed():
 		s.setState(StateFailing, sessionNoteLogin)
-		s.warn(EventBad, fmt.Sprintf("Steam no longer accepts the saved sign-in (error %d). Run houridle login again. Checking every minute.", le.EResult))
-		return retryAfterLogin
+		s.warn(EventBad, "Steam refused the saved sign-in: "+le.Error()+". Run houridle login again. Trying again every 5 minutes.")
+		return retryAfterRefused
 	case errors.As(err, &le) && le.RateLimited():
 		s.setState(StateWaiting, "rate limited")
 		s.warn(EventWarn, "Steam is limiting sign-ins; waiting 10 minutes")
@@ -269,7 +263,7 @@ func (s *SessionSupervisor) connectFailed(ctx context.Context, err error) time.D
 	case errors.As(err, &le):
 		s.setState(StateWaiting, "refused")
 		s.warn(EventWarn, "Steam refused the sign-in: "+le.Error())
-		return retryAfterLogin
+		return retryAfterRefused
 	case errors.Is(err, steamauth.ErrNetwork):
 		s.setState(StateWaiting, sessionNoteOnline)
 		s.warn(EventWarn, "Can't reach Steam; retrying")

@@ -221,22 +221,3 @@ func (c *Client) Poll(ctx context.Context, p *Pending) (*Result, error) {
 	}
 	return &Result{AccountName: d.Str(6), SteamID: info.SteamID, RefreshToken: refresh}, nil
 }
-
-// AccessToken checks a refresh token with Steam and returns a fresh access
-// token. With renew, Steam may also return a replacement refresh token
-// (otherwise newRefresh is empty). A rejected token is an *Error.
-func (c *Client) AccessToken(ctx context.Context, refresh string, steamID uint64, renew bool) (access, newRefresh string, err error) {
-	req := new(Encoder).String(1, refresh).Fixed64(2, steamID)
-	if renew {
-		req.Varint(3, 1)
-	}
-	d, err := c.call(ctx, "GenerateAccessTokenForApp", false, req.Out())
-	if err != nil {
-		return "", "", err
-	}
-	access = d.Str(1)
-	if access == "" {
-		return "", "", &Error{EResult: EResultAccessDenied, Message: "no access token returned"}
-	}
-	return access, d.Str(2), nil
-}

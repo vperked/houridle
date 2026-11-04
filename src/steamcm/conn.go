@@ -106,25 +106,6 @@ type conn struct {
 	ws *websocket.Conn
 }
 
-// dialAny connects to the first CM that answers.
-func dialAny(ctx context.Context, servers []string) (*conn, error) {
-	var last error
-	for i, s := range servers {
-		if i == maxServerTries {
-			break
-		}
-		c, err := dial(ctx, ServerURL(s))
-		if err == nil {
-			return c, nil
-		}
-		last = err
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-	}
-	return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, last)
-}
-
 func dial(ctx context.Context, url string) (*conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()

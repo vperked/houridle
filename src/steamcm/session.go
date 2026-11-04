@@ -32,10 +32,22 @@ type Config struct {
 }
 
 // LogonError is Steam refusing the sign-in.
-type LogonError struct{ EResult int }
+type LogonError struct {
+	EResult  int
+	Extended int    // Steam's extra detail code, 0 if none
+	Server   string // the server that gave this answer
+	Servers  int    // how many servers have refused (they all said no if > 1)
+}
 
 func (e *LogonError) Error() string {
-	return fmt.Sprintf("%s (Steam error %d)", steamauth.EResultText(e.EResult), e.EResult)
+	detail := fmt.Sprintf("Steam error %d", e.EResult)
+	if e.Extended != 0 {
+		detail += fmt.Sprintf(", detail %d", e.Extended)
+	}
+	if e.Servers > 1 {
+		detail += fmt.Sprintf(", refused by %d servers", e.Servers)
+	}
+	return fmt.Sprintf("%s (%s)", steamauth.EResultText(e.EResult), detail)
 }
 
 // AuthFailed reports whether the saved sign-in is no longer good (as opposed
@@ -78,6 +90,10 @@ type Session struct {
 	nextJob uint64
 }
 
+// maxRefusals is how many different servers must refuse a sign-in before
+// houridle believes it. One server saying no can be that server's quirk.
+const maxRefusals = 3
+
 // Connect signs in with the refresh token and returns once Steam accepts it.
 func Connect(ctx context.Context, cfg Config) (*Session, error) {
 	info, err := steamauth.ParseToken(cfg.RefreshToken)
@@ -88,10 +104,43 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := dialAny(ctx, servers)
-	if err != nil {
-		return nil, err
+
+	var refused *LogonError
+	refusals := 0
+	var dialErr error
+	for i, server := range servers {
+		if i == maxServerTries {
+			break
+		}
+		c, err := dial(ctx, ServerURL(server))
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			dialErr = err
+			continue
+		}
+		s, err := logOn(ctx, c, cfg)
+		var le *LogonError
+		if !errors.As(err, &le) {
+			return s, err // signed in, or failed for another reason
+		}
+		le.Server = server
+		refusals++
+		le.Servers = refusals
+		refused = le
+		if !le.AuthFailed() || refusals >= maxRefusals {
+			return nil, le
+		}
 	}
+	if refused != nil {
+		return nil, refused
+	}
+	return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, dialErr)
+}
+
+// logOn signs in over an open connection.
+func logOn(ctx context.Context, c *conn, cfg Config) (*Session, error) {
 	s := &Session{c: c, cfg: cfg, done: make(chan struct{}), jobs: map[uint64]chan Message{}}
 
 	logon := make(chan Message, 1)
@@ -152,8 +201,9 @@ func (s *Session) finishLogon(m Message) (*Session, error) {
 		eresult = int(int32(resp.Int(1)))
 	}
 	if eresult != steamauth.EResultOK {
-		s.finish(&LogonError{EResult: eresult})
-		return nil, &LogonError{EResult: eresult}
+		le := &LogonError{EResult: eresult, Extended: int(int32(resp.Int(10)))}
+		s.finish(le)
+		return nil, le
 	}
 	// The session must be for the account the token belongs to.
 	if got := m.Header.Uint(1); got != s.cfg.SteamID {

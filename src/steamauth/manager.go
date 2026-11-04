@@ -1,14 +1,15 @@
 package steamauth
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
 )
 
-// Manager ties the saved session to Steam: it loads it, checks it is still
-// good, and keeps the stored token fresh.
+// Manager ties the saved session to Steam: it loads it, checks it offline,
+// and keeps the stored token fresh. (Whether Steam still accepts the token
+// is only known by signing in, which is what idling and `status` do; Steam's
+// web service can't be asked, because it refuses this kind of token.)
 type Manager struct {
 	Client *Client
 	Store  *Store
@@ -43,52 +44,6 @@ func (m *Manager) Current() (Session, error) {
 	return sess, nil
 }
 
-// transient are the answers that mean Steam is busy or hiccuping, so the
-// saved sign-in may well still be good and trying again later makes sense.
-var transient = map[int]bool{
-	EResultFail:          true, // Steam's generic "something went wrong"
-	3:                    true, // no connection
-	EResultTimeout:       true,
-	EResultUnavailable:   true,
-	EResultRateLimited:   true,
-	EResultLoginThrottle: true,
-}
-
-// rejected reports whether Steam answered that the token itself is no good
-// (denied, revoked, expired, needs a fresh sign-in, ...). Any answer that
-// isn't a "try again later" one counts, because the cure is the same: sign in
-// again, rather than showing the person a bare Steam error code.
-func rejected(err error) bool {
-	var se *Error
-	return errors.As(err, &se) && !transient[se.EResult]
-}
-
-// Refresh asks Steam whether the saved session still works, and keeps the
-// stored token up to date if Steam hands out a new one. It returns:
-//   - ErrNotLoggedIn / ErrCorrupt / ErrSessionExpired when you need to sign in again
-//   - an error wrapping ErrNetwork when Steam couldn't be reached, in which
-//     case the saved session is left alone (it may well still be good)
-func (m *Manager) Refresh(ctx context.Context) (Session, error) {
-	sess, err := m.Current()
-	if err != nil {
-		return sess, err
-	}
-	_, renewed, err := m.Client.AccessToken(ctx, sess.RefreshToken, sess.SteamID, true)
-	if err != nil && rejected(err) {
-		// Steam can refuse the optional renewal while still honouring the
-		// token itself. Check the token on its own before giving up on it.
-		_, renewed, err = m.Client.AccessToken(ctx, sess.RefreshToken, sess.SteamID, false)
-	}
-	if err != nil {
-		var se *Error
-		if rejected(err) && errors.As(err, &se) {
-			return sess, &RejectedError{EResult: se.EResult}
-		}
-		return sess, err
-	}
-	return m.Adopt(sess, renewed)
-}
-
 // Adopt saves a replacement refresh token Steam issued for sess, but only
 // if it is for the same account and can still sign in. An empty or
 // unchanged token is not an error: there is nothing to do.
@@ -108,19 +63,6 @@ func (m *Manager) Adopt(sess Session, renewed string) (Session, error) {
 	}
 	return sess, nil
 }
-
-// RejectedError is Steam's web service refusing the check of the saved
-// token. It counts as ErrSessionExpired, but it is not the last word: the
-// connection to Steam's servers decides whether the token really works, so
-// callers that are about to connect can carry on and let that say.
-type RejectedError struct{ EResult int }
-
-func (e *RejectedError) Error() string {
-	return fmt.Sprintf("Steam's web check refused the saved sign-in (%s, error %d)", EResultText(e.EResult), e.EResult)
-}
-
-// Is makes errors.Is(err, ErrSessionExpired) true.
-func (e *RejectedError) Is(target error) bool { return target == ErrSessionExpired }
 
 // ErrDifferentAccount is returned by Remember when a different account is
 // already saved and the caller didn't agree to replace it.

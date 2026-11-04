@@ -10,7 +10,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,7 +30,7 @@ import (
 	"houridle/src/ui"
 )
 
-const version = "1.4.3"
+const version = "1.4.4"
 
 func main() {
 	os.Exit(run())
@@ -170,25 +169,16 @@ func run() int {
 	return 0
 }
 
-// checkSession makes sure there is a saved sign-in worth starting with.
-// Being offline isn't a reason to refuse: idling retries until Steam is
-// reachable. A missing, damaged or revoked sign-in is.
+// checkSession makes sure there is a saved sign-in worth starting with. It
+// only looks at the saved file; whether Steam still accepts it is found out
+// by signing in, which idling does and retries.
 func checkSession() (*steamauth.Manager, error) {
 	mgr, err := steamauth.NewManager()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	sess, err := mgr.Refresh(ctx)
-	var rejected *steamauth.RejectedError
-	switch {
-	case errors.Is(err, steamauth.ErrNetwork):
-		ui.Warn("Can't reach Steam right now; will keep trying")
-	case errors.As(err, &rejected):
-		// Steam's web check says "denied" even for good tokens of this kind;
-		// the connection is the real test, so say nothing.
-	case err != nil:
+	sess, err := mgr.Current()
+	if err != nil {
 		return nil, err
 	}
 	ui.Notice("signed in as " + describe(sess))

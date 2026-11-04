@@ -239,22 +239,6 @@ func TestSessionSupervisorReportsARevokedSignIn(t *testing.T) {
 	}
 }
 
-// Steam's web check can say no (error 63 was seen in the wild) while the
-// connection accepts the very same token. The connection decides.
-func TestSessionSupervisorIdlesWhenOnlyTheWebCheckRefuses(t *testing.T) {
-	cm := newFakeCM(t, alice, 1)
-	api := newFakeAPI(t, func(c apiCall) apiReply { return apiReply{EResult: 63} })
-	mgr := managerWith(t, api, aliceSession())
-	sup := idler.NewSession([]*steam.Game{{AppID: 730, Name: "CS"}}, mgr, func(idler.Event) {})
-	ctx, cancel := context.WithCancel(context.Background())
-	sup.Start(ctx)
-	defer func() { cancel(); sup.Wait() }()
-	if got := <-cm.gotGames; len(got) != 1 || got[0] != 730 {
-		t.Fatalf("Steam was told %v", got)
-	}
-	waitFor(t, "idling", func() bool { return sup.Views()[0].State == idler.StateIdling })
-}
-
 // ---------- listing the games an account owns ----------
 
 func TestOwnedGamesComeBackMostPlayedFirst(t *testing.T) {
@@ -418,5 +402,47 @@ func TestRenewalToAnotherAccountIsRefused(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if s, _ := mgr.Store.Load(); s.SteamID != alice || s.RefreshToken != saved.RefreshToken {
 		t.Fatal("bob's token must never replace alice's")
+	}
+}
+
+// ---------- one server's "no" isn't believed ----------
+
+func TestOneServerRefusingIsNotBelieved(t *testing.T) {
+	cm := newFakeCM(t, alice, 1)
+	cm.refuseFirstSet, cm.refuseFirst = true, 1
+	s, err := connectAlice(t, cm)
+	if err != nil {
+		t.Fatalf("the second server accepts the token: %v", err)
+	}
+	defer s.Close()
+	if n := len(cm.messages(5514)); n != 2 {
+		t.Errorf("expected 2 sign-in attempts, got %d", n)
+	}
+}
+
+func TestEveryServerRefusingIsBelieved(t *testing.T) {
+	cm := newFakeCM(t, alice, 15)
+	_, err := connectAlice(t, cm)
+	var le *steamcm.LogonError
+	if !errors.As(err, &le) || le.EResult != 15 || le.Servers != 3 || !le.AuthFailed() {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(err.Error(), "refused by 3 servers") || !strings.Contains(err.Error(), "error 15") {
+		t.Errorf("the message should show the code and how many servers agreed: %v", err)
+	}
+	if n := len(cm.messages(5514)); n != 3 {
+		t.Errorf("should stop after 3 refusals, tried %d", n)
+	}
+}
+
+func TestBusySteamIsNotRetriedAcrossServers(t *testing.T) {
+	cm := newFakeCM(t, alice, 84)
+	_, err := connectAlice(t, cm)
+	var le *steamcm.LogonError
+	if !errors.As(err, &le) || !le.RateLimited() {
+		t.Fatalf("got %v", err)
+	}
+	if n := len(cm.messages(5514)); n != 1 {
+		t.Errorf("hammering a rate-limiting Steam makes it worse; tried %d times", n)
 	}
 }
