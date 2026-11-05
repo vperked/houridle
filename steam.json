@@ -1,0 +1,5 @@
+{
+  "protocolVersion": 65580,
+  "clientPackageVersion": 1771,
+  "note": "What houridle tells Steam when signing in. Every houridle reads this file from the repository twice a day, so if Steam starts refusing sign-ins after a change on its side, updating these values here fixes it without a new release. directoryUrl (optional) must be on api.steampowered.com."
+}

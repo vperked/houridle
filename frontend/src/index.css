@@ -1,0 +1,290 @@
+@import "tailwindcss";
+
+/* houridle's look: quiet and native. Neutral greys, one accent (blue) for
+   things you can tap, green only for "running". Flat surfaces with hairline
+   borders; no gradients, glows or emoji. */
+
+
+@theme {
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: #f6f6f8;
+  --color-surface: #ffffff;
+  --color-line: rgb(15 15 30 / 0.08);
+  --color-fg: #0f0f14;
+  --color-sub: #6b6b76;
+  --color-faint: #a3a3ad;
+  --color-fill: rgb(15 15 30 / 0.05);
+  --color-accent: #4f46e5; /* links, icons, progress */
+  --color-brand: #5b5bf0; /* filled buttons (white text) */
+  --color-good: #16a34a;
+  --color-bad: #dc2626;
+  --color-warn: #b45309;
+
+  --animate-fade: fade 180ms ease-out both;
+  --animate-sheet: sheet 260ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+  --animate-toast: toast 220ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+  --animate-countdown: countdown linear forwards;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #09090b;
+    --color-surface: #131316;
+    --color-line: rgb(255 255 255 / 0.075);
+    --color-fg: #f4f4f6;
+    --color-sub: #9b9ba6;
+    --color-faint: #5f5f69;
+    --color-fill: rgb(255 255 255 / 0.06);
+    --color-accent: #8f95ff;
+    --color-brand: #6366f1;
+    --color-good: #34d399;
+    --color-bad: #f87171;
+    --color-warn: #fbbf24;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes sheet {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes toast {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@keyframes countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    color-scheme: light dark;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply min-h-dvh bg-bg font-sans text-[15px] leading-snug text-fg antialiased;
+    font-feature-settings: "cv11"; /* Inter's simpler "a" */
+  }
+  /* A faint wash of the accent at the top of the page. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: 420px;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--color-brand) 9%, transparent), transparent);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+  }
+  ::selection {
+    @apply bg-accent/25;
+  }
+  button,
+  a,
+  label,
+  select {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-accent/60;
+  }
+}
+
+@layer components {
+  /* A surface: a white (or dark grey) block with a hairline edge. */
+  .surface {
+    @apply rounded-2xl border border-line bg-surface shadow-[0_1px_2px_rgb(15_15_30/0.04)] dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.035)];
+  }
+  /* Rows inside a surface, separated by hairlines. */
+  .rows > * + * {
+    @apply border-t border-line;
+  }
+  .row {
+    @apply flex min-h-[52px] w-full items-center gap-3 px-4 py-2.5 text-left;
+  }
+  .row-tap {
+    @apply transition-colors active:bg-fill;
+  }
+  @media (hover: hover) {
+    .row-tap:hover {
+      @apply bg-fill;
+    }
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-danger,
+  .btn-ghost {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-medium whitespace-nowrap transition select-none active:opacity-70 disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn {
+    @apply border border-line bg-surface text-fg;
+  }
+  .btn-primary {
+    @apply bg-brand text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.18),0_6px_18px_-8px_var(--color-brand)];
+  }
+  .btn-danger {
+    @apply border border-line bg-surface text-bad;
+  }
+  .btn-ghost {
+    @apply px-2 text-accent;
+  }
+  @media (hover: hover) {
+    .btn:hover,
+    .btn-danger:hover {
+      @apply bg-fill;
+    }
+    .btn-primary:hover {
+      @apply opacity-90;
+    }
+    .btn-ghost:hover {
+      @apply opacity-75;
+    }
+  }
+  .btn-sm {
+    @apply h-8 rounded-lg px-3 text-[13px];
+  }
+  .btn-lg {
+    @apply h-12 rounded-2xl text-base;
+  }
+
+  .input {
+    @apply h-10 w-full rounded-xl border border-line bg-surface px-3 text-[15px] text-fg outline-none placeholder:text-faint focus:border-accent focus:ring-3 focus:ring-accent/15;
+  }
+  select.input {
+    @apply appearance-none bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  }
+
+  .heading {
+    @apply px-4 pb-2 text-[13px] font-medium text-sub;
+  }
+  .sub {
+    @apply text-sub;
+  }
+  .faint {
+    @apply text-faint;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Loading placeholders: a soft sheen sweeping across. */
+  .shimmer {
+    background: linear-gradient(90deg, var(--color-fill) 25%, color-mix(in srgb, var(--color-fill) 40%, var(--color-line)) 50%, var(--color-fill) 75%);
+    background-size: 300% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+/* Rolling digits */
+.roll-strip {
+  transition: transform 450ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+/* Equalizer bars */
+@keyframes eq {
+  0%,
+  100% {
+    height: 30%;
+  }
+  50% {
+    height: 100%;
+  }
+}
+.eq > span {
+  animation: eq 900ms ease-in-out infinite;
+}
+.eq > span:nth-child(2) {
+  animation-duration: 700ms;
+  animation-delay: -300ms;
+}
+.eq > span:nth-child(3) {
+  animation-duration: 1100ms;
+  animation-delay: -600ms;
+}
+.eq-paused > span {
+  animation: none;
+  height: 30%;
+}
+
+/* The blurred artwork behind the status card */
+.backdrop-art {
+  filter: blur(40px) saturate(1.6);
+}
+.backdrop-veil {
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--color-surface) 55%, transparent), var(--color-surface) 92%);
+}
+@media (prefers-color-scheme: light) {
+  .backdrop-veil {
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--color-surface) 70%, transparent), var(--color-surface) 92%);
+  }
+}
+
+/* Screens cross-fade into each other; the tab bar stays put. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+.vt-tabbar {
+  view-transition-name: tabbar;
+}
+
+/* History calendar */
+.heat-0 {
+  background: var(--color-fill);
+}
+.heat-1 {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.heat-2 {
+  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.heat-3 {
+  background: color-mix(in srgb, var(--color-accent) 80%, transparent);
+}
+.heat-4 {
+  background: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roll-strip {
+    transition: none;
+  }
+  .shimmer {
+    animation: none;
+  }
+  .eq > span {
+    animation: none;
+  }
+  .animate-fade,
+  .animate-sheet,
+  .animate-toast {
+    animation: none;
+  }
+}

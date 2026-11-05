@@ -1,0 +1,96 @@
+import { memo, useMemo, useState } from "react";
+import GameArt from "./GameArt.jsx";
+import { Badge, Empty, Search, Segmented, Skeleton } from "./ui.jsx";
+import { clock, hours, target } from "../format.js";
+import { stateOf } from "../states.js";
+import { load, save } from "../storage.js";
+
+const SEARCH_FROM = 8; // show the search box from this many games
+const MAX_ROWS = 200; // rows drawn at once (every-game mode can have thousands)
+
+const TONE = { idling: "good", failing: "bad", starting: "warn", waiting: "warn", done: "accent" };
+
+// Games lists every game with its state and progress, with filters and a
+// search box once there are enough games to need them.
+export default function Games({ games, loading }) {
+  const [filter, setFilterState] = useState(() => load("filter", "all"));
+  const [query, setQuery] = useState("");
+  const setFilter = (f) => {
+    setFilterState(f);
+    save("filter", f);
+  };
+
+  const counts = useMemo(() => {
+    const c = { all: games.length, idling: 0, queued: 0, done: 0 };
+    for (const g of games) if (g.state in c) c[g.state]++;
+    return c;
+  }, [games]);
+
+  const filters = [
+    { value: "all", label: "All", count: counts.all },
+    { value: "idling", label: "Idling", count: counts.idling },
+    counts.queued > 0 && { value: "queued", label: "Queued", count: counts.queued },
+    counts.done > 0 && { value: "done", label: "Done", count: counts.done },
+  ].filter(Boolean);
+  const active = filters.some((f) => f.value === filter) ? filter : "all";
+
+  const q = query.trim().toLowerCase();
+  const shown = games.filter((g) => (active === "all" || g.state === active) && (!q || g.name.toLowerCase().includes(q) || String(g.appId) === q));
+  const tools = filters.length > 2 || games.length >= SEARCH_FROM;
+
+  return (
+    <section>
+      <h2 className="heading">Games</h2>
+      {tools && (
+        <div className="mb-2.5 space-y-2">
+          {games.length >= SEARCH_FROM && <Search value={query} onChange={setQuery} placeholder="Search games" />}
+          {filters.length > 2 && <Segmented label="Filter games" options={filters} value={active} onChange={setFilter} />}
+        </div>
+      )}
+      <div className="surface rows overflow-hidden">
+        {games.length === 0 ? (
+          loading ? <Skeleton art /> : <Empty icon="play">No games yet. houridle is still reading them from Steam.</Empty>
+        ) : shown.length === 0 ? (
+          <Empty icon="search">No games match.</Empty>
+        ) : (
+          <>
+            {shown.slice(0, MAX_ROWS).map((g) => (
+              <GameRow key={g.appId} game={g} />
+            ))}
+            {shown.length > MAX_ROWS && <p className="sub px-4 py-3 text-center text-[13px]">Showing {MAX_ROWS} of {shown.length}. Search or filter to find the rest.</p>}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// GameRow is memoized: each second only the idling games' rows change.
+const GameRow = memo(function GameRow({ game: g }) {
+  const s = stateOf(g.state);
+  const live = g.state === "idling";
+  const progress = g.target && g.total ? Math.min(100, (100 * g.total) / g.target) : null;
+  const details = [];
+  if (g.total) details.push(`${hours(g.total)} total`);
+  if (g.target) details.push(`goal ${target(g.target)}`);
+  if (g.drops > 0) details.push(`${g.drops} card drop${g.drops === 1 ? "" : "s"} left`);
+  if (g.note && !live && g.note !== s.label.toLowerCase()) details.push(g.note);
+
+  return (
+    <div className="row">
+      <GameArt appId={g.appId} name={g.name} className="h-9 w-[84px]" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[15px] font-medium" title={g.name}>
+          {g.name}
+        </div>
+        <div className="sub truncate text-[13px]">{details.length ? details.join(" · ") : live ? "Just started" : "No hours yet"}</div>
+        {progress !== null && (
+          <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-fill">
+            <div className="h-full rounded-full bg-accent transition-[width] duration-700" style={{ width: `${progress}%` }} />
+          </div>
+        )}
+      </div>
+      {live ? <span className="num shrink-0 text-[14px] font-medium text-good">{clock(g.idled)}</span> : <Badge tone={TONE[g.state]}>{s.label}</Badge>}
+    </div>
+  );
+});
