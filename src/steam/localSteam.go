@@ -6,11 +6,13 @@
 package steam
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -19,11 +21,19 @@ import (
 // for the Steam API library.
 const apiSearchDepth = 3
 
-// Running reports whether the Steam client is running and signed in. The
-// recorded PID can be stale after a crash, so the process is checked too.
-func Running() bool {
+// Running reports whether the Steam client is running and signed in.
+func Running() bool { return RunningPID() != 0 }
+
+// RunningPID returns the process ID of the running, signed-in Steam client,
+// or 0. The PID Steam records can be stale after a crash and since reused by
+// another program, so the process must really be Steam (steamWindows.go,
+// steamLinux.go). Callers can compare PIDs to notice Steam restarting.
+func RunningPID() uint32 {
 	pid, user := activeProcess()
-	return pid != 0 && user != 0 && processAlive(pid)
+	if user == 0 {
+		return 0
+	}
+	return steamProcess(pid)
 }
 
 func readVDF(path string) (VDF, error) {
@@ -132,16 +142,23 @@ func parseAppID(s string) (uint32, bool) {
 
 // FindAPILibrary returns the Steam API library to load (steam_api64.dll or
 // libsteam_api.so). It prefers a copy next to houridle; otherwise it copies
-// the newest usable one found in your installed games.
+// the newest usable one found in your installed games. On Windows "usable"
+// includes a valid Authenticode signature from Valve, so a modified or
+// planted copy in some game's folder is never picked up.
 func FindAPILibrary(appDir, steamDir string) (string, error) {
 	local := filepath.Join(appDir, apiLibraryName)
-	if _, err := os.Stat(local); err == nil {
+	_, statErr := os.Stat(local)
+	localExists := statErr == nil
+	if localExists && trusted(local) {
 		return local, nil
 	}
 
 	best := newestAPILibrary(steamDir)
 	if best == "" {
-		return "", errors.New("couldn't find " + apiLibraryName + " in your Steam games; put a copy next to houridle or pass -dll")
+		return "", errors.New("couldn't find a usable " + apiLibraryName + " in your Steam games; put a copy next to houridle or pass -dll")
+	}
+	if localExists {
+		return best, nil // don't overwrite a file someone put there; load the good one in place
 	}
 	if err := copyFile(best, local); err != nil {
 		return best, nil // can't write next to houridle; load it in place
@@ -150,10 +167,13 @@ func FindAPILibrary(appDir, steamDir string) (string, error) {
 }
 
 // newestAPILibrary searches installed games for the most recently updated
-// copy of the library that this computer can load.
+// copy of the library that this computer can load and that checks out.
 func newestAPILibrary(steamDir string) string {
-	var best string
-	var bestTime int64
+	type candidate struct {
+		path    string
+		modTime int64
+	}
+	var found []candidate
 	for _, lib := range libraryFolders(steamDir) {
 		common := filepath.Join(lib, "steamapps", "common")
 		baseDepth := strings.Count(common, string(os.PathSeparator))
@@ -170,29 +190,43 @@ func newestAPILibrary(steamDir string) string {
 			if !strings.EqualFold(d.Name(), apiLibraryName) || !loadable(p) {
 				return nil
 			}
-			if info, err := d.Info(); err == nil && info.ModTime().Unix() > bestTime {
-				best, bestTime = p, info.ModTime().Unix()
+			if info, err := d.Info(); err == nil {
+				found = append(found, candidate{p, info.ModTime().Unix()})
 			}
 			return nil
 		})
 	}
-	return best
+	// Newest first; checking signatures is slower, so stop at the first good one.
+	slices.SortStableFunc(found, func(a, b candidate) int { return cmp.Compare(b.modTime, a.modTime) })
+	for _, c := range found {
+		if trusted(c.path) {
+			return c.path
+		}
+	}
+	return ""
 }
 
+// copyFile copies src to dst through a temporary file and a rename, so
+// another houridle starting at the same moment never sees half a library.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(dst)
-		return err
+	_, err = io.Copy(tmp, in)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
 	}
-	return out.Close()
+	if err == nil {
+		err = os.Rename(tmp.Name(), dst)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
 }

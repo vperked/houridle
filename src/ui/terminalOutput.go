@@ -11,7 +11,9 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
+	"unicode"
+
+	"golang.org/x/text/width"
 )
 
 const (
@@ -69,19 +71,56 @@ func bold(s string) string    { return paint("1", s) }
 // fit truncates s to w cells (ending in …) and pads it to exactly w.
 func fit(s string, w int) string {
 	s = clip(s, w)
-	return s + strings.Repeat(" ", max(0, w-utf8.RuneCountInString(s)))
+	return s + strings.Repeat(" ", max(0, w-CellWidth(s)))
 }
 
-// clip truncates s to w cells, ending in … when cut.
+// clip truncates s to w cells, ending in … when cut. A wide character that
+// would straddle the edge is dropped, so the result can be a cell short.
 func clip(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(s) <= w {
+	if CellWidth(s) <= w {
 		return s
 	}
-	r := []rune(s)
-	return string(r[:w-1]) + "…"
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		rw := runeWidth(r)
+		if used+rw > w-1 { // leave a cell for …
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+	}
+	return b.String() + "…"
+}
+
+// CellWidth is how many console cells s takes: East Asian wide and
+// fullwidth characters (CJK, most emoji) take two, combining marks and
+// control characters none. It expects plain text, without ANSI codes.
+func CellWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		n += runeWidth(r)
+	}
+	return n
+}
+
+func runeWidth(r rune) int {
+	switch {
+	case r < 0x20 || (r >= 0x7f && r < 0xa0): // control characters
+		return 0
+	case r == 0x200b || r == 0x200d: // zero-width space and joiner
+		return 0
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf): // combining marks, format characters
+		return 0
+	}
+	switch width.LookupRune(r).Kind() {
+	case width.EastAsianWide, width.EastAsianFullwidth:
+		return 2
+	}
+	return 1
 }
 
 // screen builds one full-screen frame. Each frame starts at the top-left and

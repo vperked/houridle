@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"houridle/src/idler"
 	"houridle/src/stoptime"
@@ -214,7 +213,7 @@ func (s dashboardState) totalsLine(width int, session time.Duration) string {
 		},
 	}
 	for _, f := range forms {
-		if utf8.RuneCountInString(f.plain) <= width {
+		if CellWidth(f.plain) <= width {
 			return f.shown
 		}
 	}
@@ -256,7 +255,7 @@ func (s dashboardState) hintLine(width int, keysOn, trayOn bool) string {
 func (d *Dashboard) bannerLine(width int) string {
 	const subtitle = "steam hour idler"
 	version := "v" + d.version
-	pad := width - utf8.RuneCountInString("◆ houridle  "+subtitle) - len(version)
+	pad := width - CellWidth("◆ houridle  "+subtitle) - len(version)
 	if pad < 2 {
 		return banner(subtitle, width)
 	}

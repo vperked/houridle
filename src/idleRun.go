@@ -4,11 +4,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,14 +36,17 @@ type idleRun struct {
 	session *steamauth.Manager // set when idling through a saved sign-in (houridle start)
 }
 
+// sessionEndGrace is how long the tray waits for the helpers to stop when
+// Windows is signing out or shutting down, which won't wait for long.
+const sessionEndGrace = 3 * time.Second
+
 // stopContext is cancelled on Ctrl+C, console close, logoff or a service
-// stop (SIGTERM), at the automatic stop time, or by calling cancel.
+// stop (SIGTERM), the terminal closing (SIGHUP), at the automatic stop time
+// (checked against the wall clock, so a suspend doesn't delay it), or by
+// calling cancel.
 func (r *idleRun) stopContext() (context.Context, context.CancelFunc) {
-	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	ctx, cancel := context.WithCancel(sigCtx)
-	if !r.stopAt.IsZero() {
-		ctx, cancel = context.WithDeadline(sigCtx, r.stopAt)
-	}
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, cancel := stoptime.WithStop(sigCtx, r.stopAt)
 	return ctx, func() {
 		cancel()
 		stopSignals()
@@ -51,9 +54,7 @@ func (r *idleRun) stopContext() (context.Context, context.CancelFunc) {
 }
 
 // reachedStopTime reports whether ctx ended because the stop time came.
-func reachedStopTime(ctx context.Context) bool {
-	return errors.Is(ctx.Err(), context.DeadlineExceeded)
-}
+func reachedStopTime(ctx context.Context) bool { return stoptime.Reached(ctx) }
 
 // noteStopTime logs and announces that idling ended at the planned time.
 func (r *idleRun) noteStopTime() {
@@ -149,7 +150,18 @@ func (r *idleRun) inTray() {
 	sup := r.newSupervisor(func(idler.Event) {}) // the menu shows each game's state
 	r.logStart("in the tray")
 	sup.Start(ctx)
-	choice := tray.Run(sup, start, r.stopAt, ctx.Done())
+
+	var stopLogged sync.Once
+	logStop := func() { stopLogged.Do(func() { r.logStop(sup.Views(), time.Since(start)) }) }
+	sessionEnding := func() {
+		// Windows ends this process as soon as this returns: stop the
+		// helpers and write the stop line now.
+		r.log.Printf("info   Windows is signing out or shutting down")
+		cancel()
+		waitAtMost(sup.Wait, sessionEndGrace)
+		logStop()
+	}
+	choice := tray.Run(sup, start, r.stopAt, ctx.Done(), sessionEnding)
 	timeUp := reachedStopTime(ctx)
 	cancel()
 	sup.Wait()
@@ -165,12 +177,34 @@ func (r *idleRun) inTray() {
 	if timeUp {
 		r.log.Printf("info   reached the stop time (%s)", stoptime.Describe(r.stopAt, time.Now()))
 	}
-	r.logStop(sup.Views(), time.Since(start))
+	logStop()
+}
+
+// waitAtMost runs wait, giving up on it after d.
+func waitAtMost(wait func(), d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // handOffToTray starts a detached tray copy with the same games and stop
 // time. The caller must not hold the instance lock (the new copy needs it).
 func (r *idleRun) handOffToTray() int {
+	// Check the lock first, so "already idling" shows up here in the console
+	// rather than as a message box from the tray copy after we've said it's fine.
+	probe, err := handover.TakeLock()
+	if err != nil {
+		return ui.Fatal(err)
+	}
+	probe.Release()
 	if err := handover.LaunchTray(r.exePath, r.libPath, r.stopAt, r.appIDs); err != nil {
 		return ui.Fatal(err)
 	}

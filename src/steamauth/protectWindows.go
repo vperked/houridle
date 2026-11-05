@@ -12,9 +12,17 @@ import (
 // Windows file modes don't carry permissions, so there is nothing to set.
 const permsUnsupported = true
 
-// entropy ties the encrypted file to houridle: another program running as
-// the same user can't just ask Windows to decrypt it without knowing this.
+// entropy is extra input DPAPI mixes into the encryption. It is not a
+// secret (it is in this program for anyone to read), so it only stops
+// tools that decrypt DPAPI blobs blindly; any program running as the same
+// Windows user can still decrypt the file. The real protection is DPAPI's:
+// other users, and copies of the file taken to another machine or account,
+// can't read it.
 var entropy = []byte("houridle session v1")
+
+// syncDir does nothing on Windows: a directory can't be synced there, and
+// NTFS journals the rename itself (the file's contents were synced first).
+func syncDir(string) error { return nil }
 
 func blob(b []byte) *windows.DataBlob {
 	if len(b) == 0 {

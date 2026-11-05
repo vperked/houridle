@@ -42,9 +42,11 @@ func Disable() error {
 	return nil
 }
 
-// Command is what Windows runs at sign-in.
+// Command is what Windows runs at sign-in. It says "-stop never" so the
+// copy Windows starts (in a console window, which it then hands over to the
+// tray) doesn't stop to ask when to stop idling.
 func Command(exePath, libPath string) string {
-	return `"` + exePath + `" -tray -dll "` + libPath + `"`
+	return `"` + exePath + `" -tray -dll "` + libPath + `" -stop never`
 }
 
 // Supported reports whether houridle can set up autostart on this OS.

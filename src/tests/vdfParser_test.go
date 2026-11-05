@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"houridle/src/steam"
@@ -38,6 +39,23 @@ func TestParseVDFRejectsBrokenFiles(t *testing.T) {
 	for _, broken := range []string{`"a" { "b" "c"`, `"a"`, `}`} {
 		if _, err := steam.ParseVDF(broken); err == nil {
 			t.Errorf("%q should fail to parse", broken)
+		}
+	}
+}
+
+// Nesting is capped, so a damaged or hostile file returns an error instead
+// of recursing until the Go stack limit kills houridle.
+func TestParseVDFCapsNesting(t *testing.T) {
+	nested := func(depth int) string {
+		return strings.Repeat(`"a" { `, depth) + `"k" "v" ` + strings.Repeat("} ", depth)
+	}
+	root, err := steam.ParseVDF(nested(20))
+	if err != nil || root.Get(strings.Split(strings.Repeat("a ", 20), " ")[:20]...).Str("k") != "v" {
+		t.Fatalf("20 levels should parse: %v", err)
+	}
+	for _, depth := range []int{100, 1_000_000} {
+		if _, err := steam.ParseVDF(nested(depth)); err == nil {
+			t.Errorf("%d levels of nesting should be rejected", depth)
 		}
 	}
 }

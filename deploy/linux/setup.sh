@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sets houridle up on a Linux server (Ubuntu or Debian):
-#   - installs Steam, a virtual display (Xvfb) and a VNC server (x11vnc)
+#   - installs Steam, a virtual display (Xvfb, with xauth) and a VNC server (x11vnc)
 #   - copies houridle to ~/houridle
 #   - adds services for the display, Steam and houridle that start at boot
 #
@@ -11,6 +11,9 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 install_dir="$HOME/houridle"
 unit_dir="$HOME/.config/systemd/user"
+# Set when a re-run updates houridle or a service file, so it's restarted.
+binary_changed=0
+units_changed=0
 
 say() { printf '\n\033[1;36m◆\033[0m %s\n' "$*"; }
 die() { printf '\n\033[1;31m✕\033[0m %s\n' "$*" >&2; exit 1; }
@@ -34,7 +37,7 @@ then run: $0 path/to/houridle"
 }
 
 install_packages() {
-  if command -v Xvfb >/dev/null && command -v x11vnc >/dev/null && steam_path >/dev/null; then
+  if command -v Xvfb >/dev/null && command -v xauth >/dev/null && command -v x11vnc >/dev/null && steam_path >/dev/null; then
     say "Steam, Xvfb and x11vnc are already installed"
     return
   fi
@@ -44,7 +47,7 @@ install_packages() {
   say "Installing Steam, Xvfb and x11vnc (Steam will ask you to accept its license)"
   sudo dpkg --add-architecture i386 # Steam needs 32-bit libraries
   sudo apt-get update
-  if sudo apt-get install -y xvfb x11vnc steam-installer; then
+  if sudo apt-get install -y xvfb xauth x11vnc steam-installer; then
     return
   fi
   if grep -qi '^ID=ubuntu' /etc/os-release; then
@@ -52,7 +55,7 @@ install_packages() {
     sudo apt-get install -y software-properties-common
     sudo add-apt-repository -y multiverse
     sudo apt-get update
-    sudo apt-get install -y xvfb x11vnc steam-installer
+    sudo apt-get install -y xvfb xauth x11vnc steam-installer
   else
     die "Couldn't install Steam. On Debian, add 'contrib non-free' to the lines in /etc/apt/sources.list, then run this again."
   fi
@@ -72,7 +75,26 @@ steam_path() {
 install_houridle() {
   say "Installing houridle to $install_dir"
   mkdir -p "$install_dir"
+  if [ -e "$install_dir/houridle" ] && cmp -s "$1" "$install_dir/houridle"; then
+    return # already this version (or the very same file)
+  fi
+  [ ! -e "$install_dir/houridle" ] || binary_changed=1
   install -m 755 "$1" "$install_dir/houridle"
+}
+
+# install_unit copies a service file (from stdin) into place, noting whether
+# an existing one changed.
+install_unit() {
+  local dest="$unit_dir/$1" tmp
+  tmp="$(mktemp)"
+  cat >"$tmp"
+  if [ -e "$dest" ] && cmp -s "$tmp" "$dest"; then
+    rm -f -- "$tmp"
+    return
+  fi
+  [ ! -e "$dest" ] || units_changed=1
+  mv -- "$tmp" "$dest"
+  chmod 644 "$dest"
 }
 
 install_services() {
@@ -81,14 +103,24 @@ install_services() {
 
   say "Adding services (display, Steam, houridle)"
   mkdir -p "$unit_dir"
-  cp "$here/systemd/houridle-display.service" "$here/systemd/houridle.service" "$unit_dir/"
-  sed "s|STEAM_PATH|$steam|" "$here/systemd/houridle-steam.service" >"$unit_dir/houridle-steam.service"
+  install_unit houridle-display.service <"$here/systemd/houridle-display.service"
+  install_unit houridle.service <"$here/systemd/houridle.service"
+  install_unit houridle-steam.service < <(sed "s|STEAM_PATH|$steam|" "$here/systemd/houridle-steam.service")
 
   say "Letting your services keep running when you log out"
   sudo loginctl enable-linger "$USER"
 
   systemctl --user daemon-reload
   systemctl --user enable --now houridle-display.service houridle-steam.service
+  # On a re-run, restart what's running so updates take effect now, not at
+  # the next reboot. try-restart leaves houridle alone if it isn't running.
+  if [ "$units_changed" = 1 ]; then
+    say "Restarting the display and Steam with the updated services"
+    systemctl --user restart houridle-display.service houridle-steam.service
+  fi
+  if [ "$units_changed" = 1 ] || [ "$binary_changed" = 1 ]; then
+    systemctl --user try-restart houridle.service
+  fi
 }
 
 main() {

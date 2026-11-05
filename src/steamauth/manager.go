@@ -44,22 +44,36 @@ func (m *Manager) Current() (Session, error) {
 	return sess, nil
 }
 
+// ErrRenewedNotSaved is returned by Adopt when the replacement token is
+// good but couldn't be written. The returned Session then holds the new
+// token, so the caller can keep using it (and try saving again later).
+var ErrRenewedNotSaved = errors.New("couldn't save the renewed sign-in")
+
 // Adopt saves a replacement refresh token Steam issued for sess, but only
 // if it is for the same account and can still sign in. An empty or
 // unchanged token is not an error: there is nothing to do.
+//
+// If the token is unusable, the original sess is returned with an error.
+// If only saving failed, the error wraps ErrRenewedNotSaved and the
+// returned Session carries the new token.
 func (m *Manager) Adopt(sess Session, renewed string) (Session, error) {
 	if renewed == "" || renewed == sess.RefreshToken {
 		return sess, nil
 	}
 	info, perr := ParseToken(renewed)
-	if perr != nil || info.SteamID != sess.SteamID || !info.CanLogOn() {
+	switch {
+	case perr != nil:
+		return sess, errors.New("Steam sent a replacement token houridle can't read; keeping the old one")
+	case info.SteamID != sess.SteamID:
 		return sess, errors.New("Steam sent a replacement token for a different account; keeping the old one")
+	case !info.CanLogOn():
+		return sess, errors.New("Steam sent a replacement token that can't sign in to its servers; keeping the old one")
 	}
 	sess.RefreshToken = renewed
 	sess.Expires = info.Expires
 	sess.SavedAt = m.now()
 	if err := m.Store.Save(sess); err != nil {
-		return sess, fmt.Errorf("couldn't save the renewed sign-in: %w", err)
+		return sess, fmt.Errorf("%w: %w", ErrRenewedNotSaved, err)
 	}
 	return sess, nil
 }

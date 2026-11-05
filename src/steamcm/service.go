@@ -55,12 +55,14 @@ func (s *Session) Call(ctx context.Context, method string, body []byte) (*steama
 	defer timer.Stop()
 	select {
 	case m := <-ch:
-		if code := int32(m.Header.Int(13)); m.Header.Has(13) && code != steamauth.EResultOK {
-			return nil, &steamauth.Error{EResult: int(code), Message: m.Header.Str(14)}
-		}
-		return steamauth.Decode(m.Body)
+		return reply(m)
 	case <-s.done:
 		forget()
+		select { // the answer may have come just before the connection ended
+		case m := <-ch:
+			return reply(m)
+		default:
+		}
 		return nil, fmt.Errorf("%w: connection closed", steamauth.ErrNetwork)
 	case <-timer.C:
 		forget()
@@ -69,6 +71,14 @@ func (s *Session) Call(ctx context.Context, method string, body []byte) (*steama
 		forget()
 		return nil, ctx.Err()
 	}
+}
+
+// reply turns a service method's answer into its body, or Steam's error.
+func reply(m Message) (*steamauth.Decoded, error) {
+	if code := int32(m.Header.Int(13)); m.Header.Has(13) && code != steamauth.EResultOK {
+		return nil, &steamauth.Error{EResult: int(code), Message: m.Header.Str(14)}
+	}
+	return steamauth.Decode(m.Body)
 }
 
 // OwnedGame is a game or app the account owns.

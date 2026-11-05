@@ -145,10 +145,19 @@ func (s *Store) Save(sess Session) error {
 		tmp.Close()
 		return err
 	}
+	// On disk before the rename, so a power cut can't leave the new name
+	// pointing at an empty file.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), s.Path)
+	if err := os.Rename(tmp.Name(), s.Path); err != nil {
+		return err
+	}
+	return syncDir(dir)
 }
 
 // Delete removes the saved session. Not having one is not an error.

@@ -84,3 +84,39 @@ func TestDashboardDedupesRepeatedEvents(t *testing.T) {
 		t.Fatalf("a repeated event should show once, shows %d times", n)
 	}
 }
+
+func TestDashboardLayoutFitsWideNames(t *testing.T) {
+	games := fakeGames{
+		{Game: &steam.Game{AppID: 1, Name: strings.Repeat("原神", 30)}, State: idler.StateIdling, Idled: time.Hour},
+		{Game: &steam.Game{AppID: 2, Name: strings.Repeat("🎮", 40)}, State: idler.StateFailing, Note: strings.Repeat("失敗", 20)},
+	}
+	d := ui.NewDashboard(time.Now(), "1.0.0", true)
+	d.AddEvent(idler.Event{At: time.Now(), Text: strings.Repeat("東方 ", 30)})
+	for _, size := range consoleSizes {
+		checkFrame(t, d.Preview(games, size[0], size[1]), size[0], size[1])
+	}
+}
+
+func TestDashboardKeysIgnoreEscapeSequences(t *testing.T) {
+	d := ui.NewDashboard(time.Now(), "1.0.0", true)
+	// F2 is ESC O Q, F4 is ESC O S, ctrl+T-ish sequences end in letters too.
+	d.Press("\x1bOQ\x1b[1;5Q\x1b[A\x1bOT")
+	select {
+	case a := <-d.Actions():
+		t.Fatalf("an escape sequence triggered action %v", a)
+	default:
+	}
+	d.Press("q")
+	select {
+	case a := <-d.Actions():
+		if a != ui.ActionStop {
+			t.Fatalf("q gave action %v", a)
+		}
+	default:
+		t.Fatal("q should stop")
+	}
+	d.Press("t")
+	if a := <-d.Actions(); a != ui.ActionTray {
+		t.Fatalf("t gave action %v", a)
+	}
+}

@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"time"
-	"unicode/utf8"
 
 	"houridle/src/idler"
 )
@@ -26,7 +25,7 @@ func PrintSummary(views []idler.View, session time.Duration) {
 	nameW := 0
 	for _, v := range views {
 		total += v.Idled
-		nameW = max(nameW, utf8.RuneCountInString(v.Game.Name))
+		nameW = max(nameW, CellWidth(v.Game.Name))
 	}
 	nameW = min(nameW, 40, max(8, width-20))
 

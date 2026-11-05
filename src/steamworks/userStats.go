@@ -2,9 +2,7 @@ package steamworks
 
 import (
 	"errors"
-	"runtime"
 	"time"
-	"unsafe"
 )
 
 // Accessor names for ISteamUserStats across SDK versions, newest first.
@@ -92,12 +90,12 @@ func (s *UserStats) Achievements(count int) ([]Achievement, error) {
 		if a.Name == "" {
 			a.Name = id
 		}
-		idPtr, achieved := cBytes(id), new(byte)
-		r, err = s.call("GetAchievement", uintptr(unsafe.Pointer(idPtr)), uintptr(unsafe.Pointer(achieved)))
-		runtime.KeepAlive(idPtr)
-		runtime.KeepAlive(achieved)
+		var args cArgs
+		achieved := args.buffer(1) // bool*
+		r, err = s.call("GetAchievement", args.str(id), args.addr(achieved))
+		args.done()
 		if err == nil && boolResult(r) {
-			a.Unlocked = *achieved != 0
+			a.Unlocked = achieved[0] != 0
 		}
 		out = append(out, a)
 	}
@@ -105,10 +103,9 @@ func (s *UserStats) Achievements(count int) ([]Achievement, error) {
 }
 
 func (s *UserStats) attribute(id, key string) string {
-	idPtr, keyPtr := cBytes(id), cBytes(key)
-	r, err := s.call("GetAchievementDisplayAttribute", uintptr(unsafe.Pointer(idPtr)), uintptr(unsafe.Pointer(keyPtr)))
-	runtime.KeepAlive(idPtr)
-	runtime.KeepAlive(keyPtr)
+	var args cArgs
+	r, err := s.call("GetAchievementDisplayAttribute", args.str(id), args.str(key))
+	args.done()
 	if err != nil {
 		return ""
 	}
@@ -121,9 +118,9 @@ func (s *UserStats) SetUnlocked(id string, unlocked bool) error {
 	if unlocked {
 		method = "SetAchievement"
 	}
-	idPtr := cBytes(id)
-	r, err := s.call(method, uintptr(unsafe.Pointer(idPtr)))
-	runtime.KeepAlive(idPtr)
+	var args cArgs
+	r, err := s.call(method, args.str(id))
+	args.done()
 	if err != nil {
 		return err
 	}

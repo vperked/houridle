@@ -172,12 +172,19 @@ type fakeCM struct {
 	renewTo        string // refresh token to hand out when asked to renew
 	refuseFirstSet bool
 	refuseFirst    int // refuse this many sign-ins (with logonResult) before accepting
+
+	logonResults    []int    // if set, the answers to the next sign-ins, in order (then logonResult)
+	hangUpFirst     int      // hang up on this many sign-ins without answering
+	afterLogon      [][]byte // frames sent in the same batch as the sign-in answer
+	closeAfterLogon bool     // hang up right after answering a sign-in
+	stallAfterLogon bool     // stop reading (so pings go unanswered) after a sign-in
+	quit            chan struct{}
 }
 
 // newFakeCM starts the server and points houridle at it for this test.
 func newFakeCM(t testing.TB, answerAs uint64, logonResult int) *fakeCM {
 	t.Helper()
-	f := &fakeCM{t: t, logonResult: logonResult, answerAs: answerAs, sessionID: 4242, gotGames: make(chan []uint64, 256)}
+	f := &fakeCM{t: t, logonResult: logonResult, answerAs: answerAs, sessionID: 4242, gotGames: make(chan []uint64, 256), quit: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cmsocket/", f.serve)
 	mux.HandleFunc("/dir", func(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +199,7 @@ func newFakeCM(t testing.TB, answerAs uint64, logonResult int) *fakeCM {
 	})
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
+	t.Cleanup(func() { close(f.quit) }) // runs first: frees stalled handlers
 
 	oldDir, oldURL := steamcm.DirectoryURL, steamcm.ServerURL
 	steamcm.DirectoryURL = f.URL + "/dir"
@@ -226,7 +234,15 @@ func (f *fakeCM) serve(w http.ResponseWriter, r *http.Request) {
 		case 5514: // ClientLogon
 			result := f.logonResult
 			f.mu.Lock()
-			if f.refuseFirst > 0 {
+			if f.hangUpFirst > 0 {
+				f.hangUpFirst--
+				f.mu.Unlock()
+				ws.CloseNow()
+				return
+			}
+			if len(f.logonResults) > 0 {
+				result, f.logonResults = f.logonResults[0], f.logonResults[1:]
+			} else if f.refuseFirst > 0 {
 				f.refuseFirst--
 				if result == 1 {
 					result = 15
@@ -234,11 +250,21 @@ func (f *fakeCM) serve(w http.ResponseWriter, r *http.Request) {
 			} else if f.refuseFirstSet {
 				result = 1
 			}
+			extra, closeAfter, stall := f.afterLogon, f.closeAfterLogon, f.stallAfterLogon
 			f.mu.Unlock()
 			resp := new(steamauth.Encoder).Varint(1, uint64(result)).Varint(3, 1).Out()
 			reply := frame(751, f.answerAs, f.sessionID, resp)
 			// Batched and compressed, like the real thing.
-			ws.Write(ctx, websocket.MessageBinary, multi(reply))
+			ws.Write(ctx, websocket.MessageBinary, multi(append([][]byte{reply}, extra...)...))
+			if closeAfter {
+				ws.CloseNow()
+				return
+			}
+			if stall {
+				<-f.quit
+				ws.CloseNow()
+				return
+			}
 		case 151: // a service method call
 			f.mu.Lock()
 			f.calls = append(f.calls, hdr.Str(12))

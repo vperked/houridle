@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,6 +24,51 @@ func ReadSecret(prompt string) (string, error) {
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	return string(b), err
+}
+
+// ReadLineContext is ReadLine that stops waiting when ctx ends (for
+// example Ctrl+C under signal.NotifyContext), returning ctx's error.
+func ReadLineContext(ctx context.Context, prompt string) (string, error) {
+	return readContext(ctx, func() (string, error) { return ReadLine(prompt) })
+}
+
+// ReadSecretContext is ReadSecret that stops waiting when ctx ends. The
+// terminal is put back as it was, so typing is shown again afterwards.
+func ReadSecretContext(ctx context.Context, prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	state, _ := term.GetState(fd)
+	answer, err := readContext(ctx, func() (string, error) { return ReadSecret(prompt) })
+	if ctx.Err() != nil && answer == "" {
+		if state != nil {
+			term.Restore(fd, state) // the abandoned read had turned echo off
+		}
+		fmt.Println()
+	}
+	return answer, err
+}
+
+// readContext runs a blocking read but gives up when ctx ends. The read
+// itself can't be interrupted, so it is left waiting; this is only for
+// prompts after which the program exits when cancelled.
+func readContext(ctx context.Context, read func() (string, error)) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	type result struct {
+		answer string
+		err    error
+	}
+	got := make(chan result, 1)
+	go func() {
+		answer, err := read()
+		got <- result{answer, err}
+	}()
+	select {
+	case r := <-got:
+		return r.answer, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // ParseChoice turns an answer to a numbered menu of n items into a 0-based

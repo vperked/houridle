@@ -32,6 +32,17 @@ func (e *Encoder) Fixed64(num protowire.Number, v uint64) *Encoder {
 	return e
 }
 
+func (e *Encoder) Fixed32(num protowire.Number, v uint32) *Encoder {
+	e.b = protowire.AppendTag(e.b, num, protowire.Fixed32Type)
+	e.b = protowire.AppendFixed32(e.b, v)
+	return e
+}
+
+// Float writes a 32-bit float field.
+func (e *Encoder) Float(num protowire.Number, v float32) *Encoder {
+	return e.Fixed32(num, math.Float32bits(v))
+}
+
 func (e *Encoder) String(num protowire.Number, s string) *Encoder {
 	return e.Bytes(num, []byte(s))
 }

@@ -65,18 +65,31 @@ func (h *helperProcess) waitReady(ctx context.Context) error {
 	defer timeout.Stop()
 	select {
 	case line := <-h.ready.result:
-		if line == helperReady {
-			return nil
-		}
-		code, msg, _ := strings.Cut(strings.TrimPrefix(line, helperFailPrefix), " ")
-		return &helperFailure{code: code, msg: msg}
+		return parseStatus(line)
 	case <-h.exited:
-		return &helperFailure{code: failNoReply, msg: "helper exited without saying why"}
+		// Wait (and so exited) only finishes after all output was read, so a
+		// FAIL line the helper printed is already waiting; the select above
+		// may still have picked this case, as both were ready.
+		select {
+		case line := <-h.ready.result:
+			return parseStatus(line)
+		default:
+			return &helperFailure{code: failNoReply, msg: "helper exited without saying why"}
+		}
 	case <-timeout.C:
 		return &helperFailure{code: failTimeout, msg: "timed out talking to Steam"}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// parseStatus turns the helper's status line into nil (READY) or a failure.
+func parseStatus(line string) error {
+	if line == helperReady {
+		return nil
+	}
+	code, msg, _ := strings.Cut(strings.TrimPrefix(line, helperFailPrefix), " ")
+	return &helperFailure{code: code, msg: msg}
 }
 
 // stop asks the helper to exit cleanly, and kills it if it doesn't in time.

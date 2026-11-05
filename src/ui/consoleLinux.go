@@ -5,9 +5,16 @@ package ui
 import (
 	"fmt"
 	"os"
+	"syscall"
+	"time"
 
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
+
+// exitSignals end houridle from outside (kill, a closed SSH session). While
+// the console is in raw mode, houridle catches them to put it back first.
+var exitSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
 // enableColors reports whether output is a terminal that understands ANSI
 // codes (not a pipe, a log file, or TERM=dumb).
@@ -35,6 +42,14 @@ func enableRawInput() (restore func(), err error) {
 		return nil, err
 	}
 	return func() { term.Restore(fd, old) }, nil
+}
+
+// inputPending waits up to timeout for console input to arrive, without
+// reading it.
+func inputPending(timeout time.Duration) bool {
+	fds := []unix.PollFd{{Fd: int32(os.Stdin.Fd()), Events: unix.POLLIN}}
+	n, err := unix.Poll(fds, int(timeout.Milliseconds()))
+	return err == nil && n > 0
 }
 
 // launchedByDoubleClick is a Windows idea; on Linux houridle always runs in

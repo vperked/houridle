@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"houridle/src/steamworks"
@@ -52,6 +53,11 @@ type Result struct {
 // RunHelper is the helper process: it loads the app's achievements, sends
 // them, applies one change request, and exits. Returns the exit code.
 func RunHelper(appID uint32, dllPath string) int {
+	// Every Steam call happens on this goroutine; keep it on one OS thread
+	// so the Steam API library always sees the same thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	api, err := steamworks.Init(dllPath, appID)
 	if err != nil {
 		send(listReply{Code: errorCode(err), Error: err.Error()})

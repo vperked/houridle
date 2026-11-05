@@ -33,11 +33,15 @@ Open Steam and sign in, then run houridle. The first time, it asks which games t
 | `houridle 730 440` | Idle these games (by app ID) |
 | `houridle -stop 3h` | Stop after 3 hours, without asking (`90m` and `23:30` work too) |
 | `houridle -stop never` | Keep going until you stop it, without asking |
-| `houridle -setup` | Choose which games to idle |
+| `houridle -setup` | Choose which games to idle, save them, then start idling them (`houridle -setup 730 440` starts the picker with those ticked) |
 | `houridle -list` | Show your games and their app IDs |
 | `houridle -achievements` | Unlock or lock achievements |
 | `houridle -tray` | Idle in the system tray, by the clock (Windows) |
 | `houridle -autostart on` | Start in the tray when you sign in (Windows); `off` to undo |
+
+Flags can go before or after app IDs: `houridle 730 440 -stop 3h` works too.
+
+Your game list is saved in `config.json` next to houridle. If that folder can't be written to (for example `C:\Program Files`), houridle uses your user config folder instead (`%AppData%\houridle` on Windows, `~/.config/houridle` on Linux), for `houridle.log` too.
 
 ### Signing in to Steam (optional)
 
@@ -81,7 +85,7 @@ An app ID is the number in a game's Steam store link, like `store.steampowered.c
 
 ### Log
 
-Everything houridle does while idling goes into `houridle.log` next to it: starts, stops, games that fail, and Steam closing. It's handy for checking on a server. Once the log reaches 1 MB it moves to `houridle.log.1` and a new one starts.
+Everything houridle does while idling goes into `houridle.log` next to it (or in the user config folder, see above): starts, stops, games that fail, and Steam closing. It's handy for checking on a server. Once the log reaches 1 MB it moves to `houridle.log.1` and a new one starts.
 
 ## Good to know
 
@@ -121,6 +125,7 @@ GOOS=linux go build -o houridle ./src
 ```
 
 ```bash
+ssh you@your-server mkdir -p houridle-setup
 scp -r houridle deploy/linux you@your-server:houridle-setup/
 ```
 
@@ -140,7 +145,7 @@ scp -r houridle deploy/linux you@your-server:houridle-setup/
 
    While you're in Steam, tick **Remember me**, approve Steam Guard, and install any small **native Linux** game you own. houridle needs its `libsteam_api.so` (or copy a 64-bit `libsteam_api.so` into `~/houridle/` yourself).
 
-3. Choose your games:
+3. Choose your games. After saving them, houridle starts idling right there; press `Q` to stop it before the next step:
 
    ```bash
    ~/houridle/houridle -setup
@@ -162,13 +167,23 @@ tail -f ~/houridle/houridle.log
 systemctl --user status houridle houridle-steam
 ```
 
+To change the games later, stop the service (only one houridle idles at a time), pick them (press `Q` once it starts idling), and start the service again so it reads the new list:
+
+```bash
+systemctl --user stop houridle
+~/houridle/houridle -setup
+systemctl --user restart houridle
+```
+
 To stop it:
 
 ```bash
 systemctl --user disable --now houridle
 ```
 
-Other distros work too: install Steam, Xvfb and x11vnc with your package manager, then run `setup.sh`. Use the regular Steam package, not the Flatpak or Snap.
+Re-running `setup.sh` with a newer `houridle` installs it and restarts the houridle service if it's running (and the display and Steam, if their service files changed). The virtual screen only accepts programs that have its key (`~/houridle/Xauthority`, readable only by you), so other users on the server can't watch it.
+
+Other distros work too: install Steam, Xvfb, xauth and x11vnc with your package manager, then run `setup.sh`. Use the regular Steam package, not the Flatpak or Snap.
 
 ## Code
 

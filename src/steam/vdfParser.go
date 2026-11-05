@@ -28,11 +28,16 @@ func (k VDF) Str(key string) string {
 	return s
 }
 
+// maxVDFDepth caps how deeply blocks may nest. Steam's own files stay well
+// under 16; the cap keeps a damaged or hostile file from recursing until the
+// Go stack limit kills the process.
+const maxVDFDepth = 64
+
 // ParseVDF parses the text of a .vdf or .acf file.
 func ParseVDF(data string) (VDF, error) {
 	p := &vdfParser{s: data}
 	root := VDF{}
-	if err := p.block(root, false); err != nil {
+	if err := p.block(root, 0); err != nil {
 		return nil, err
 	}
 	return root, nil
@@ -104,7 +109,13 @@ func (p *vdfParser) token() (tok string, quoted bool, ok bool) {
 	return p.s[start:p.pos], false, true
 }
 
-func (p *vdfParser) block(into VDF, nested bool) error {
+// block reads key/value pairs into into until the closing brace (or the end
+// of the file at depth 0).
+func (p *vdfParser) block(into VDF, depth int) error {
+	if depth > maxVDFDepth {
+		return fmt.Errorf("vdf: blocks nested more than %d deep", maxVDFDepth)
+	}
+	nested := depth > 0
 	for {
 		key, quoted, ok := p.token()
 		if !ok {
@@ -133,7 +144,7 @@ func (p *vdfParser) block(into VDF, nested bool) error {
 		k := strings.ToLower(key)
 		if val == "{" && !vquoted {
 			child := VDF{}
-			if err := p.block(child, true); err != nil {
+			if err := p.block(child, depth+1); err != nil {
 				return err
 			}
 			if existing, ok := into[k].(VDF); ok {

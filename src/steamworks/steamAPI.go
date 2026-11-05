@@ -105,10 +105,11 @@ func (a *API) function(name string) (function, error) {
 func initSteam(lib library) error {
 	// Steamworks SDK 1.58+: ESteamAPIInitResult SteamAPI_InitFlat(SteamErrMsg *err)
 	if initFlat, ok := lib.lookup("SteamAPI_InitFlat"); ok {
-		msg := new([1024]byte)
-		r := initFlat(uintptr(unsafe.Pointer(&msg[0])))
-		runtime.KeepAlive(msg)
-		text := string(bytes.TrimRight(msg[:], "\x00"))
+		var args cArgs
+		msg := args.buffer(1024) // SteamErrMsg is char[1024]
+		r := initFlat(args.addr(msg))
+		args.done()
+		text := string(bytes.TrimRight(msg, "\x00"))
 		switch int32(r) {
 		case initOK:
 			return nil
@@ -150,13 +151,32 @@ func cString(p uintptr) string {
 	return string(unsafe.Slice(start, n))
 }
 
-// cBytes makes a NUL-terminated heap copy of s to pass to the library.
-// Callers keep it alive with runtime.KeepAlive until the call returns.
-func cBytes(s string) *byte {
-	b := make([]byte, len(s)+1)
-	copy(b, s)
-	return &b[0]
+// cArgs holds the Go memory handed to the library for one call. Every
+// buffer is on the heap and pinned until done, so it can't be moved or freed
+// while C has its address. (A uintptr made from a stack variable goes stale
+// if the goroutine's stack is grown or shrunk before the call reaches C, and
+// runtime.KeepAlive doesn't prevent that.)
+type cArgs struct{ pins runtime.Pinner }
+
+// buffer returns a zeroed, pinned heap buffer of n bytes for C to fill.
+func (a *cArgs) buffer(n int) []byte {
+	b := make([]byte, n)
+	a.pins.Pin(&b[0])
+	return b
 }
+
+// str returns the address of a pinned, NUL-terminated copy of s.
+func (a *cArgs) str(s string) uintptr {
+	b := a.buffer(len(s) + 1)
+	copy(b, s)
+	return a.addr(b)
+}
+
+// addr is the address of a buffer from this cArgs.
+func (a *cArgs) addr(b []byte) uintptr { return uintptr(unsafe.Pointer(&b[0])) }
+
+// done unpins everything; call it once the library has returned.
+func (a *cArgs) done() { a.pins.Unpin() }
 
 // boolResult reads a C bool return value (only the low byte is set).
 func boolResult(r uintptr) bool { return r&0xff != 0 }

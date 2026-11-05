@@ -9,10 +9,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
-const apiLibraryName = "libsteam_api.so"
+const (
+	apiLibraryName = "libsteam_api.so"
+	steamImage     = "steam" // the client's process name in /proc/<pid>/comm
+)
 
 // Where Steam lives on Linux, relative to your home folder: the usual
 // install (Debian/Ubuntu/Arch packages and the official installer) first,
@@ -69,9 +73,44 @@ func activeProcess() (pid, accountID uint32) {
 	return 0, 0
 }
 
-func processAlive(pid uint32) bool {
-	err := syscall.Kill(int(pid), 0) // signal 0 only checks the process exists
-	return err == nil || errors.Is(err, syscall.EPERM)
+// steamProcess returns the PID of the running Steam client, or 0. The PID
+// Steam recorded is checked to really be our own "steam" process: it can be
+// stale and reused, belong to another user, or (Flatpak) be a PID from inside
+// the sandbox. If it doesn't check out, /proc is searched for our Steam.
+func steamProcess(pid uint32) uint32 {
+	if pid != 0 && isSteamProcess(strconv.FormatUint(uint64(pid), 10)) {
+		return pid
+	}
+	if pid == 0 {
+		return 0 // Steam says it isn't running
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+	for _, e := range entries {
+		found, err := strconv.ParseUint(e.Name(), 10, 32)
+		if err == nil && found != 0 && isSteamProcess(e.Name()) {
+			return uint32(found)
+		}
+	}
+	return 0
+}
+
+// isSteamProcess reports whether /proc/<pid> is a process named "steam"
+// running as this user.
+func isSteamProcess(pid string) bool {
+	dir := filepath.Join("/proc", pid)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Getuid() {
+		return false
+	}
+	comm, err := os.ReadFile(filepath.Join(dir, "comm"))
+	return err == nil && strings.TrimSpace(string(comm)) == steamImage
 }
 
 // pathKey makes paths comparable: Linux paths are case-sensitive.
@@ -88,3 +127,6 @@ func loadable(path string) bool {
 	want := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[runtime.GOARCH]
 	return f.Class == elf.ELFCLASS64 && f.Machine == want
 }
+
+// trusted is always true on Linux: libsteam_api.so isn't signed.
+func trusted(string) bool { return true }

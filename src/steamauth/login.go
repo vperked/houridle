@@ -76,6 +76,7 @@ const (
 	persistent          = 1
 	defaultPoll         = 5 * time.Second
 	minPoll             = time.Second
+	maxPoll             = 30 * time.Second
 )
 
 func deviceDetails(name string) *Encoder {
@@ -89,12 +90,18 @@ func deviceDetails(name string) *Encoder {
 		Varint(3, uint64(osType))
 }
 
+// pollInterval is how long to wait between polls, from what Steam asked
+// for. It is kept within sensible bounds: a huge (or not-a-number) value
+// would otherwise overflow, or leave the sign-in waiting until it times out.
 func pollInterval(seconds float32) time.Duration {
-	d := time.Duration(float64(seconds) * float64(time.Second))
-	if d <= 0 {
+	s := float64(seconds)
+	switch {
+	case s != s || s <= 0: // NaN, zero or negative: Steam didn't say
 		return defaultPoll
+	case s >= maxPoll.Seconds():
+		return maxPoll
 	}
-	return max(d, minPoll)
+	return max(time.Duration(s*float64(time.Second)), minPoll)
 }
 
 func confirmations(d *Decoded, num protowire.Number) []Confirmation {

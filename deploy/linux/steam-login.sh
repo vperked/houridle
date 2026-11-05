@@ -12,6 +12,11 @@ die() { printf '\n\033[1;31m✕\033[0m %s\n' "$*" >&2; exit 1; }
 command -v x11vnc >/dev/null || die "x11vnc isn't installed. Run setup.sh first."
 systemctl --user start houridle-display.service houridle-steam.service
 
+# The virtual display only lets in programs with its cookie (see
+# houridle-display.service); x11vnc needs it to show the screen.
+xauthority="$HOME/houridle/Xauthority"
+[ -s "$xauthority" ] || die "The display's cookie ($xauthority) is missing. Run setup.sh again."
+
 # A random one-time password, in a file only you can read. x11vnc deletes
 # the file once it has read it ("rm:").
 password="$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 12 || true)"
@@ -37,5 +42,7 @@ On your own computer:
 Waiting for you to connect…
 EOF
 
-x11vnc -display :99 -localhost -once -quiet -passwdfile "rm:$password_file"
+# A fixed port, so the tunnel above is right: if 5900 is taken, x11vnc stops
+# with an error instead of quietly moving to another port.
+x11vnc -display :99 -auth "$xauthority" -rfbport 5900 -localhost -once -quiet -passwdfile "rm:$password_file"
 printf '\nDone. Steam stays signed in on the server.\n'

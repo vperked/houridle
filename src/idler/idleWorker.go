@@ -13,9 +13,21 @@ import (
 
 const (
 	startStagger    = 150 * time.Millisecond // gap between games starting
-	steamPollEvery  = 10 * time.Second       // while waiting for Steam to start
 	retryAfterFail  = time.Minute            // after Steam refused the game
-	retryAfterCrash = 5 * time.Second        // after a helper exited on its own
+	crashBackoffMin = 5 * time.Second        // after a helper exited on its own...
+	crashBackoffMax = 5 * time.Minute        // ...doubling each time, up to this
+	stableAfter     = 10 * time.Minute       // a helper up this long resets the backoff
+)
+
+// Package hooks, swapped by tests.
+var (
+	// steamPollEvery is how often to check on Steam, both while waiting for
+	// it to start and while idling (to notice it closing or restarting).
+	steamPollEvery = 10 * time.Second
+	// steamPID returns the running Steam client's PID, or 0.
+	steamPID = steam.RunningPID
+	// launchHelper starts one game's helper process.
+	launchHelper = startHelper
 )
 
 // Short labels for failure codes, shown in the game's status column.
@@ -36,7 +48,7 @@ type worker struct {
 	game    *steam.Game
 	exePath string
 	dllPath string
-	emit    func(EventLevel, string)
+	sup     *Supervisor
 
 	mu      sync.Mutex // guards the fields below
 	state   State
@@ -44,7 +56,10 @@ type worker struct {
 	banked  time.Duration // idle time from earlier stretches
 	note    string        // short failure label
 	lastErr string        // last failure message, to avoid repeating it
+	crashes int           // helper exits in a row, for the restart backoff
 }
+
+func (w *worker) emit(level EventLevel, text string) { w.sup.emit(level, text) }
 
 // run is the worker's loop: wait for Steam, run the helper, retry. It
 // returns when ctx is cancelled.
@@ -55,8 +70,8 @@ func (w *worker) run(ctx context.Context, initialDelay time.Duration) {
 	}
 	for {
 		var retryAfter time.Duration
-		if steam.Running() {
-			retryAfter = w.runHelper(ctx)
+		if pid := steamPID(); pid != 0 {
+			retryAfter = w.runHelper(ctx, pid)
 		} else {
 			retryAfter = w.waitForSteam()
 		}
@@ -66,19 +81,22 @@ func (w *worker) run(ctx context.Context, initialDelay time.Duration) {
 	}
 }
 
+// waitForSteam notes that Steam isn't running. A worker still marked idling
+// got here because Steam closed under it, which the supervisor announces
+// once for all games.
 func (w *worker) waitForSteam() time.Duration {
 	if w.view().State == StateIdling {
-		w.emit(EventWarn, "Steam closed, waiting for it to come back")
+		w.sup.steamClosed()
 	}
 	w.setState(StateWaiting, "")
 	return steamPollEvery
 }
 
-// runHelper runs one helper until it stops or ctx ends, and returns how long
-// to wait before trying again.
-func (w *worker) runHelper(ctx context.Context) (retryAfter time.Duration) {
+// runHelper runs one helper until it stops, Steam (process pid) closes or
+// restarts, or ctx ends, and returns how long to wait before trying again.
+func (w *worker) runHelper(ctx context.Context, pid uint32) (retryAfter time.Duration) {
 	w.setState(StateStarting, "")
-	h, err := startHelper(w.exePath, w.dllPath, w.game.AppID)
+	h, err := launchHelper(w.exePath, w.dllPath, w.game.AppID)
 	if err != nil {
 		w.reportFailure(failStart, "couldn't start helper: "+err.Error())
 		return retryAfterFail
@@ -95,25 +113,93 @@ func (w *worker) runHelper(ctx context.Context) (retryAfter time.Duration) {
 		}
 		return retryAfterFail
 	}
-	w.markIdling()
+	w.markIdling(pid)
+	upSince := time.Now()
 
-	select {
-	case <-ctx.Done():
-		h.stop()
-		return 0
-	case <-h.exited:
-		w.setState(StateStarting, "")
-		w.emit(EventWarn, w.game.Name+" helper stopped unexpectedly, restarting")
-		return retryAfterCrash
+	poll := time.NewTicker(steamPollEvery)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			h.stop()
+			return 0
+		case <-h.exited:
+			if w.steamChanged(pid) {
+				return 0
+			}
+			return w.helperCrashed(time.Since(upSince))
+		case <-poll.C:
+			if w.steamChanged(pid) {
+				h.stop()
+				return 0
+			}
+		}
 	}
 }
 
-func (w *worker) markIdling() {
+// steamChanged reports whether Steam has closed or restarted since the
+// helper started, so the helper has to go. A closed Steam leaves the worker
+// marked idling, so run's next waitForSteam reports it.
+func (w *worker) steamChanged(pid uint32) bool {
+	switch now := steamPID(); now {
+	case pid:
+		return false
+	case 0:
+		return true
+	default:
+		w.setState(StateStarting, "")
+		w.sup.steamRestarted(now)
+		return true
+	}
+}
+
+// helperCrashed handles a helper that exited on its own while Steam kept
+// running. Restarts back off exponentially, and only the first two in a row
+// are announced, so a helper that keeps dying can't flood the feed and log.
+func (w *worker) helperCrashed(up time.Duration) time.Duration {
+	w.mu.Lock()
+	if up >= stableAfter {
+		w.crashes = 0
+	}
+	w.crashes++
+	n := w.crashes
+	w.mu.Unlock()
+
+	switch n {
+	case 1:
+		w.setState(StateStarting, "")
+		w.emit(EventWarn, w.game.Name+" helper stopped unexpectedly, restarting")
+	case 2:
+		w.setState(StateFailing, "keeps stopping")
+		w.emit(EventWarn, fmt.Sprintf("%s helper keeps stopping; retrying less often (up to every %s)", w.game.Name, crashBackoffMax))
+	default:
+		w.setState(StateFailing, "keeps stopping")
+	}
+	return crashBackoff(n)
+}
+
+// crashBackoff is the wait before restart number n (1-based) in a row.
+func crashBackoff(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	if n > 16 {
+		return crashBackoffMax
+	}
+	return min(crashBackoffMin<<(n-1), crashBackoffMax)
+}
+
+// markIdling records a helper as running under Steam process pid.
+func (w *worker) markIdling(pid uint32) {
 	w.mu.Lock()
 	w.lastErr = ""
+	quiet := w.crashes > 1 // later restarts in a crash streak go unannounced
 	w.mu.Unlock()
 	w.setState(StateIdling, "")
-	w.emit(EventGood, w.game.Name+" is idling")
+	w.sup.steamUp(pid)
+	if !quiet {
+		w.emit(EventGood, w.game.Name+" is idling")
+	}
 }
 
 // reportFailure shows a short label on the game's row and logs the full

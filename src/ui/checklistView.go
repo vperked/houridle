@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"unicode/utf8"
 )
 
 // checklistChrome is the lines that aren't list rows: banner, search box,
@@ -69,7 +68,7 @@ func (c *Checklist) writeRows(out *screen, rows []checkRow, width int) {
 func (c *Checklist) footerLine(width int) string {
 	status := c.summary(c)
 	fits := func(hint string, gap int) bool {
-		return width >= utf8.RuneCountInString(status)+utf8.RuneCountInString(hint)+gap
+		return width >= CellWidth(status)+CellWidth(hint)+gap
 	}
 	switch {
 	case fits(c.hints[0], 3):

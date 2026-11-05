@@ -7,6 +7,7 @@
 package stoptime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -76,4 +77,52 @@ func atClockTime(s string, now time.Time) (time.Time, error) {
 		at = at.AddDate(0, 0, 1)
 	}
 	return at, nil
+}
+
+// ErrReached is the cause of a context ended by WithStop at the stop time.
+var ErrReached = errors.New("reached the stop time")
+
+// wallCheckEvery is how often WithStop also compares the wall clock with the
+// stop time.
+const wallCheckEvery = time.Minute
+
+// WithStop returns a context that ends at the wall-clock time at, with cause
+// ErrReached (see Reached). A plain deadline is a monotonic timer, which on
+// Linux stands still while the computer sleeps, so after a suspend it would
+// fire late by however long the sleep was; this also checks the wall clock
+// every minute. A zero at never ends it.
+func WithStop(parent context.Context, at time.Time) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	if !at.IsZero() {
+		go watch(ctx, at, wallCheckEvery, func() { cancel(ErrReached) })
+	}
+	return ctx, func() { cancel(context.Canceled) }
+}
+
+// Reached reports whether ctx (from WithStop) ended because the stop time came.
+func Reached(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), ErrReached)
+}
+
+// watch calls reached once the wall clock gets to at, checking when a timer
+// set for at fires and every checkEvery in between.
+func watch(ctx context.Context, at time.Time, checkEvery time.Duration, reached func()) {
+	timer := time.NewTimer(time.Until(at))
+	defer timer.Stop()
+	ticker := time.NewTicker(checkEvery)
+	defer ticker.Stop()
+	for {
+		left := time.Until(at)
+		if left <= 0 {
+			reached()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			timer.Reset(time.Until(at)) // in case it fired early, or the clock was set back
+		case <-ticker.C:
+		}
+	}
 }

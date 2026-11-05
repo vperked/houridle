@@ -91,13 +91,17 @@ func runLogin(args []string) int {
 		return ui.Fatal(loginError(err))
 	}
 
+	// From here Ctrl+C may end the program as usual: nothing is half done.
+	stop()
 	err = mgr.Remember(res, func(old steamauth.Session) bool {
 		return ui.Confirm(fmt.Sprintf("%s is already signed in. Replace it with %s?", describe(old), res.AccountName))
 	})
 	switch {
 	case errors.Is(err, steamauth.ErrDifferentAccount):
-		ui.Notice("kept the existing sign-in, nothing changed")
-		return 0
+		// Not a success: the sign-in that was just made was not saved, and
+		// a script must not think it was.
+		ui.Notice("kept the existing sign-in; the new one was not saved")
+		return 1
 	case err != nil:
 		return ui.Fatal(fmt.Errorf("signed in, but couldn't save it: %w", err))
 	}
@@ -166,8 +170,8 @@ func drawQR(url string) {
 func loginWithPassword(ctx context.Context, c *steamauth.Client, user string, env steamauth.EnvCredentials) (*steamauth.Result, error) {
 	var err error
 	if user == "" {
-		if user, err = ui.ReadLine("Steam account name: "); err != nil || user == "" {
-			return nil, errors.New("no account name given")
+		if user, err = ui.ReadLineContext(ctx, "Steam account name: "); err != nil || user == "" {
+			return nil, promptError(ctx, "no account name given")
 		}
 	}
 	pass := env.Password
@@ -175,8 +179,8 @@ func loginWithPassword(ctx context.Context, c *steamauth.Client, user string, en
 		if !ui.CanPrompt() {
 			return nil, errors.New("no password given")
 		}
-		if pass, err = ui.ReadSecret("Password (hidden): "); err != nil || pass == "" {
-			return nil, errors.New("no password given")
+		if pass, err = ui.ReadSecretContext(ctx, "Password (hidden): "); err != nil || pass == "" {
+			return nil, promptError(ctx, "no password given")
 		}
 	}
 	ui.Progress("Signing in")
@@ -236,9 +240,9 @@ func answerCode(ctx context.Context, c *steamauth.Client, p *steamauth.Pending, 
 		if alt {
 			prompt = "Steam Guard code from " + where + ", or Enter to approve in the app: "
 		}
-		code, err := ui.ReadLine(prompt)
+		code, err := ui.ReadLineContext(ctx, prompt)
 		if err != nil {
-			return errors.New("no Steam Guard code given")
+			return promptError(ctx, "no Steam Guard code given")
 		}
 		if code == "" && alt {
 			ui.Info("Open the Steam mobile app and approve this sign-in.")
@@ -255,6 +259,15 @@ func answerCode(ctx context.Context, c *steamauth.Client, p *steamauth.Pending, 
 		ui.Warn(steamauth.EResultText(se.EResult) + ", try again")
 	}
 	return nil
+}
+
+// promptError is why a prompt gave no answer: Ctrl+C (or the time limit)
+// if that is what ended it, otherwise what was missing.
+func promptError(ctx context.Context, missing string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New(missing)
 }
 
 // loginError turns a failed sign-in into advice.
@@ -323,6 +336,11 @@ func runStatus(args []string) int {
 		exit = 1
 	case errors.Is(err, steamauth.ErrCorrupt):
 		ui.Field("sign-in", ui.Bad("saved sign-in is damaged")+ui.Dim("  run: houridle login"))
+		exit = 1
+	case err != nil && !errors.Is(err, steamauth.ErrSessionExpired):
+		// Couldn't even read it (permissions, a file in use, ...): say so,
+		// rather than checking an empty sign-in with Steam.
+		ui.Field("sign-in", ui.Bad(err.Error()))
 		exit = 1
 	default:
 		ui.Field("account", describe(sess))

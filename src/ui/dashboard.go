@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"houridle/src/idler"
 )
@@ -140,22 +141,40 @@ func (d *Dashboard) drawLoop() {
 // readKeys turns console key presses into actions. It runs until the
 // process exits; Close restores line input so nothing is read after that.
 func (d *Dashboard) readKeys() {
+	var keys keyBuffer
 	buf := make([]byte, 64)
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
 			return
 		}
-		for _, key := range buf[:n] {
-			switch key {
-			case 't', 'T':
-				if d.trayOn {
-					d.sendAction(ActionTray)
-				}
-			case 'q', 'Q', ctrlC:
-				d.sendAction(ActionStop)
-			}
+		d.handleKeys(keys.next(buf[:n]))
+	}
+}
+
+// Press applies key input as if typed, e.g. "q" or "OQ" (F2, which
+// must not count as q). Actions go to Actions, as with real key presses.
+func (d *Dashboard) Press(keys string) { d.handleKeys([]byte(keys)) }
+
+// handleKeys turns whole keys into actions. Escape sequences (arrows,
+// function keys) are skipped as a whole, so the letters inside them, like
+// the Q of F2's ESC O Q, aren't taken as commands.
+func (d *Dashboard) handleKeys(input []byte) {
+	for len(input) > 0 {
+		if input[0] == escape {
+			input = skipEscape(input)
+			continue
 		}
+		switch input[0] {
+		case 't', 'T':
+			if d.trayOn {
+				d.sendAction(ActionTray)
+			}
+		case 'q', 'Q', ctrlC:
+			d.sendAction(ActionStop)
+		}
+		_, size := utf8.DecodeRune(input)
+		input = input[size:]
 	}
 }
 

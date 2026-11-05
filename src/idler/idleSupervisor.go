@@ -58,6 +58,10 @@ type Supervisor struct {
 	workers []*worker
 	onEvent func(Event)
 	wg      sync.WaitGroup
+
+	mu              sync.Mutex // guards the fields below
+	closedAnnounced bool       // "Steam closed" was shown since games last idled
+	restartPID      uint32     // the Steam process games last idled under or were moved to
 }
 
 // New prepares a supervisor. exePath is houridle itself (re-run as the
@@ -65,7 +69,7 @@ type Supervisor struct {
 func New(games []*steam.Game, exePath, dllPath string, onEvent func(Event)) *Supervisor {
 	s := &Supervisor{workers: make([]*worker, len(games)), onEvent: onEvent}
 	for i, g := range games {
-		s.workers[i] = &worker{game: g, exePath: exePath, dllPath: dllPath, emit: s.emit}
+		s.workers[i] = &worker{game: g, exePath: exePath, dllPath: dllPath, sup: s}
 	}
 	return s
 }
@@ -96,4 +100,36 @@ func (s *Supervisor) Views() []View {
 
 func (s *Supervisor) emit(level EventLevel, text string) {
 	s.onEvent(Event{At: time.Now(), Level: level, Text: text})
+}
+
+// steamClosed announces, once for all games, that Steam closed while idling.
+func (s *Supervisor) steamClosed() {
+	s.mu.Lock()
+	announced := s.closedAnnounced
+	s.closedAnnounced = true
+	s.mu.Unlock()
+	if !announced {
+		s.emit(EventWarn, "Steam closed, waiting for it to come back")
+	}
+}
+
+// steamRestarted announces, once per new Steam process, that Steam restarted
+// and the games are moving over to it.
+func (s *Supervisor) steamRestarted(pid uint32) {
+	s.mu.Lock()
+	announced := s.restartPID == pid
+	s.restartPID = pid
+	s.mu.Unlock()
+	if !announced {
+		s.emit(EventWarn, "Steam restarted, reconnecting the games")
+	}
+}
+
+// steamUp notes a game idling under Steam process pid, so a later close is
+// announced again and only a different process counts as a restart.
+func (s *Supervisor) steamUp(pid uint32) {
+	s.mu.Lock()
+	s.closedAnnounced = false
+	s.restartPID = pid
+	s.mu.Unlock()
 }

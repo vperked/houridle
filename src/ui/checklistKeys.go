@@ -78,7 +78,7 @@ func (c *Checklist) handleKey(input []byte) (used int, done bool, err error) {
 		c.setSearch(nil)
 	default:
 		r, size := utf8.DecodeRune(input)
-		if unicode.IsPrint(r) {
+		if r != utf8.RuneError && unicode.IsPrint(r) { // RuneError: a broken or cut-off character
 			c.setSearch(append(c.search, r))
 		}
 		return size, false, nil

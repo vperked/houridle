@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -59,5 +60,49 @@ func TestStopTimeDescribe(t *testing.T) {
 	}
 	if got := stoptime.Describe(now.Add(20*time.Hour), now); got != "Wed 13:00" {
 		t.Errorf("tomorrow = %q", got)
+	}
+}
+
+func TestStopContextEndsAtTheStopTime(t *testing.T) {
+	ctx, cancel := stoptime.WithStop(context.Background(), time.Now().Add(50*time.Millisecond))
+	defer cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stop time passed but the context didn't end")
+	}
+	if !stoptime.Reached(ctx) {
+		t.Fatalf("ended with %v, not the stop time", context.Cause(ctx))
+	}
+}
+
+func TestStopContextCancelledIsNotTheStopTime(t *testing.T) {
+	ctx, cancel := stoptime.WithStop(context.Background(), time.Now().Add(time.Hour))
+	cancel()
+	<-ctx.Done()
+	if stoptime.Reached(ctx) {
+		t.Fatal("stopping by hand was taken for the stop time")
+	}
+
+	ctx, cancel = stoptime.WithStop(context.Background(), stoptime.Never)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		t.Fatal("no stop time should mean the context never ends by itself")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// A stop time already past (e.g. handed over just after it) ends at once.
+func TestStopContextPastTimeEndsAtOnce(t *testing.T) {
+	ctx, cancel := stoptime.WithStop(context.Background(), time.Now().Add(-time.Minute))
+	defer cancel()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a past stop time should end the context at once")
+	}
+	if !stoptime.Reached(ctx) {
+		t.Fatal("should count as the stop time")
 	}
 }

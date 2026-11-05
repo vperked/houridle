@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 )
 
 // ErrCancelled is returned when the user backs out of a checklist.
@@ -72,10 +74,15 @@ func (c *Checklist) run() error {
 	if err != nil {
 		return err
 	}
-	defer restore()
+	leave := func() {
+		os.Stdout.WriteString(altScreenOff)
+		restore()
+	}
+	defer leave()
+	defer restoreOnExitSignal(leave)()
 	os.Stdout.WriteString(altScreenOn)
-	defer os.Stdout.WriteString(altScreenOff)
 
+	var keys keyBuffer
 	buf := make([]byte, 256)
 	for {
 		w, h := termSize()
@@ -84,9 +91,34 @@ func (c *Checklist) run() error {
 		if err != nil {
 			return err
 		}
-		if done, err := c.handle(buf[:n]); done || err != nil {
+		if done, err := c.handle(keys.next(buf[:n])); done || err != nil {
 			return err
 		}
+	}
+}
+
+// restoreOnExitSignal makes a kill, hang-up or console close run cleanup
+// (putting the console back to normal) before houridle exits, instead of
+// leaving the terminal in raw mode. Call the returned func to stop watching.
+func restoreOnExitSignal(cleanup func()) (stop func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, exitSignals...)
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-sigs:
+			cleanup()
+			code := 1
+			if s, ok := sig.(syscall.Signal); ok {
+				code = 128 + int(s) // the shell's convention for "killed by a signal"
+			}
+			os.Exit(code)
+		case <-finished:
+		}
+	}()
+	return func() {
+		signal.Stop(sigs)
+		close(finished)
 	}
 }
 
@@ -134,6 +166,24 @@ func (c *Checklist) hasID(id string) bool {
 }
 
 // ---------- results ----------
+
+// Feed applies key input the way it arrives from the console, one read per
+// argument: a key cut off at the end of a read is completed by the next one,
+// and whatever is still unfinished after the last read (e.g. a lone Esc)
+// counts as typed. It reports like Press.
+func (c *Checklist) Feed(reads ...string) (done bool, err error) {
+	var keys keyBuffer
+	for i, r := range reads {
+		input := keys.add([]byte(r))
+		if i == len(reads)-1 {
+			input = append(input, keys.flush()...)
+		}
+		if done, err := c.handle(input); done || err != nil {
+			return done, err
+		}
+	}
+	return false, nil
+}
 
 // Press applies key input as if typed, e.g. "rust", " " (toggle), "\r"
 // (Enter) or "\x1b[B" (down arrow). It reports whether the user finished

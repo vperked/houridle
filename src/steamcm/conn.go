@@ -159,11 +159,15 @@ func (c *conn) read(ctx context.Context) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parse(data, 0)
+	budget := maxUnzipped
+	return parse(data, 0, &budget)
 }
 
 // parse decodes one message, unpacking batches (EMsg Multi) recursively.
-func parse(data []byte, depth int) ([]Message, error) {
+// budget is how many bytes may still be decompressed for this websocket
+// frame, shared by every batch inside it, so nested batches can't multiply
+// the memory one frame costs.
+func parse(data []byte, depth int, budget *int) ([]Message, error) {
 	if len(data) < 8 {
 		return nil, errors.New("short message from Steam")
 	}
@@ -193,17 +197,21 @@ func parse(data []byte, depth int) ([]Message, error) {
 	}
 	payload := multi.Raw(2)
 	if size := multi.Uint(1); size > 0 {
-		if size > maxUnzipped {
+		if size > uint64(*budget) {
 			return nil, errors.New("oversized batch from Steam")
 		}
 		zr, err := gzip.NewReader(bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
-		payload, err = io.ReadAll(io.LimitReader(zr, maxUnzipped+1))
-		if err != nil || len(payload) > maxUnzipped {
+		payload, err = io.ReadAll(io.LimitReader(zr, int64(*budget)+1))
+		if err != nil {
 			return nil, errors.New("bad compressed batch from Steam")
 		}
+		if len(payload) > *budget {
+			return nil, errors.New("oversized batch from Steam")
+		}
+		*budget -= len(payload)
 	}
 	var out []Message
 	for len(payload) > 0 {
@@ -215,7 +223,7 @@ func parse(data []byte, depth int) ([]Message, error) {
 		if n < 0 || n > len(payload) {
 			return nil, errors.New("truncated batch from Steam")
 		}
-		inner, err := parse(payload[:n], depth+1)
+		inner, err := parse(payload[:n], depth+1, budget)
 		if err != nil {
 			return nil, err
 		}

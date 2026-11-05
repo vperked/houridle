@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -32,6 +33,11 @@ const (
 // client that this process is the game, then waits until the parent closes
 // our stdin (which also happens if the parent dies). Returns the exit code.
 func RunHelper(appID uint32, dllPath string) int {
+	// Every Steam call happens on this goroutine; keep it on one OS thread
+	// so the Steam API library always sees the same thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	api, err := steamworks.Init(dllPath, appID)
 	if err != nil {
 		code := steamworks.CodeRefused

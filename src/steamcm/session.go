@@ -60,6 +60,22 @@ func (e *LogonError) AuthFailed() bool {
 	return false
 }
 
+// EResults that are about the server, not the sign-in: another server may
+// well take it. (Rate limiting is not one of these: it applies to the
+// account or network, and asking more servers only makes it worse.)
+const (
+	eresultBusy         = 10
+	eresultTryAnotherCM = 48
+)
+
+func (e *LogonError) tryAnotherServer() bool {
+	switch e.EResult {
+	case eresultBusy, steamauth.EResultUnavailable, eresultTryAnotherCM:
+		return true
+	}
+	return false
+}
+
 // RateLimited reports whether Steam asked houridle to slow down.
 func (e *LogonError) RateLimited() bool {
 	return e.EResult == steamauth.EResultRateLimited || e.EResult == steamauth.EResultLoginThrottle
@@ -74,15 +90,21 @@ func (e *LoggedOffError) Error() string {
 
 // Session is a signed-in connection to Steam that can report games as played.
 type Session struct {
-	c         *conn
-	cfg       Config
+	c   *conn
+	cfg Config
+
+	// sessionID is written once, by logOn, before logonDone closes; every
+	// reader runs after that (readLoop waits for logonDone, the heartbeat
+	// and callers start after it), so it needs no lock.
 	sessionID int32
+	logonDone chan struct{} // closed when logOn has finished, either way
 
 	done chan struct{}
 	once sync.Once
 	err  error // why it ended; set before done closes
 
 	mu      sync.Mutex
+	live    bool // signed in: OnPlaying may be called from now on
 	games   []uint32
 	blocked bool
 
@@ -105,9 +127,10 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, err
 	}
 
-	var refused *LogonError
+	var refused *LogonError // the last "your sign-in is no good" answer
+	var busy *LogonError    // the last "not this server" answer
 	refusals := 0
-	var dialErr error
+	var netErr error
 	for i, server := range servers {
 		if i == maxServerTries {
 			break
@@ -117,15 +140,31 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			dialErr = err
+			netErr = fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
 			continue
 		}
 		s, err := logOn(ctx, c, cfg)
+		if err == nil {
+			return s, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		var le *LogonError
 		if !errors.As(err, &le) {
-			return s, err // signed in, or failed for another reason
+			// One server timing out or hanging up is that server's trouble:
+			// try the next, as for a server that can't be reached at all.
+			if errors.Is(err, steamauth.ErrNetwork) {
+				netErr = err
+				continue
+			}
+			return nil, err // e.g. Steam signed in the wrong account
 		}
 		le.Server = server
+		if le.tryAnotherServer() {
+			busy = le
+			continue
+		}
 		refusals++
 		le.Servers = refusals
 		refused = le
@@ -133,15 +172,21 @@ func Connect(ctx context.Context, cfg Config) (*Session, error) {
 			return nil, le
 		}
 	}
-	if refused != nil {
+	switch {
+	case refused != nil:
 		return nil, refused
+	case busy != nil:
+		return nil, busy
+	case netErr != nil:
+		return nil, netErr
 	}
-	return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, dialErr)
+	return nil, fmt.Errorf("%w: no server answered", steamauth.ErrNetwork)
 }
 
 // logOn signs in over an open connection.
 func logOn(ctx context.Context, c *conn, cfg Config) (*Session, error) {
-	s := &Session{c: c, cfg: cfg, done: make(chan struct{}), jobs: map[uint64]chan Message{}}
+	s := &Session{c: c, cfg: cfg, done: make(chan struct{}), logonDone: make(chan struct{}), jobs: map[uint64]chan Message{}}
+	defer close(s.logonDone)
 
 	logon := make(chan Message, 1)
 	go s.readLoop(logon)
@@ -180,6 +225,15 @@ func logOn(ctx context.Context, c *conn, cfg Config) (*Session, error) {
 	case m := <-logon:
 		return s.finishLogon(m)
 	case <-s.done:
+		// Steam often answers a refused sign-in and hangs up straight away;
+		// if both have happened, the answer is what matters.
+		select {
+		case m := <-logon:
+			if _, err := s.finishLogon(m); err != nil {
+				return nil, err
+			}
+		default:
+		}
 		return nil, fmt.Errorf("%w: connection closed while signing in", steamauth.ErrNetwork)
 	case <-timer.C:
 		s.finish(errors.New("sign-in timed out"))
@@ -212,12 +266,16 @@ func (s *Session) finishLogon(m Message) (*Session, error) {
 		return nil, err
 	}
 	s.sessionID = int32(m.Header.Int(2))
+	s.mu.Lock()
+	s.live = true
+	s.mu.Unlock()
 
 	beat := time.Duration(resp.Int(3)) * time.Second
 	if beat <= 0 {
 		beat = defaultBeat
 	}
 	go s.heartbeat(beat)
+	go s.keepAlive(PingEvery, PingTimeout)
 	return s, nil
 }
 
@@ -235,6 +293,13 @@ func (s *Session) readLoop(logon chan<- Message) {
 				select {
 				case logon <- m:
 				default:
+				}
+				// Let logOn finish with the answer before handling anything
+				// sent after it, so those messages see the signed-in session.
+				select {
+				case <-s.logonDone:
+				case <-s.done:
+					return
 				}
 			case emsgClientLoggedOff:
 				d, _ := steamauth.Decode(m.Body)
@@ -260,13 +325,21 @@ func (s *Session) readLoop(logon chan<- Message) {
 // setBlocked records that another device is (or has stopped) playing. When
 // it stops, the games are reported again; houridle never takes the account
 // back from someone who is playing for real.
+//
+// OnPlaying is only called once the sign-in has succeeded. A change that
+// arrives with the sign-in itself may be reported just before Connect
+// returns; callers read Blocked after Connect for the state at that point.
 func (s *Session) setBlocked(blocked bool, app uint32) {
 	s.mu.Lock()
 	was := s.blocked
 	s.blocked = blocked
+	live := s.live
 	games := append([]uint32(nil), s.games...)
 	s.mu.Unlock()
 
+	if !live {
+		return
+	}
 	if s.cfg.OnPlaying != nil && was != blocked {
 		s.cfg.OnPlaying(blocked, app)
 	}
@@ -290,8 +363,46 @@ func (s *Session) heartbeat(every time.Duration) {
 	}
 }
 
+// PingEvery and PingTimeout set how often houridle checks that Steam is
+// still there, and how long it waits for the answer. Steam never answers a
+// heartbeat, so without this a connection that silently died (a network
+// change, a laptop waking up) would only be noticed when the operating
+// system gives up on it, which can take a quarter of an hour. They are
+// generous so a merely slow server never causes a reconnect. Variables only
+// so tests can shorten them.
+var (
+	PingEvery   = 2 * time.Minute
+	PingTimeout = 30 * time.Second
+)
+
+// keepAlive pings Steam (a websocket ping, answered by the server itself)
+// and ends the session if no answer comes. readLoop is always reading, which
+// is what lets the answer arrive.
+func (s *Session) keepAlive(every, timeout time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			err := s.c.ws.Ping(ctx)
+			cancel()
+			if err != nil {
+				s.finish(fmt.Errorf("Steam stopped answering: %w", err))
+				return
+			}
+		}
+	}
+}
+
 func (s *Session) send(emsg uint32, body []byte) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	return s.sendWithin(10*time.Second, emsg, body)
+}
+
+func (s *Session) sendWithin(timeout time.Duration, emsg uint32, body []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	err := s.c.send(ctx, emsg, header{steamID: s.cfg.SteamID, sessionID: s.sessionID}, body)
 	if err != nil {
@@ -360,6 +471,7 @@ func (s *Session) Close() {
 		return
 	default:
 	}
-	s.send(emsgClientGamesPlayed, gamesPlayedBody(nil))
+	// Briefly: on a stalled connection this must not hold up shutdown.
+	s.sendWithin(time.Second, emsgClientGamesPlayed, gamesPlayedBody(nil))
 	s.finish(nil)
 }

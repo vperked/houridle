@@ -18,9 +18,14 @@ const (
 )
 
 // Run shows the tray icon and blocks until the user picks Open dashboard or
-// Stop idling, or stop is closed (e.g. on logoff or at the stop time).
-// stopAt is shown in the menu when set.
-func Run(src ViewSource, start, stopAt time.Time, stop <-chan struct{}) Choice {
+// Stop idling, or stop is closed (e.g. at the stop time). stopAt is shown in
+// the menu when set.
+//
+// When Windows ends the session (logoff, shutdown) the tray gets
+// WM_ENDSESSION and the process is ended as soon as that is handled, so Run
+// never returns. sessionEnding is called then, on the tray's thread, to wind
+// down in time; it may be nil.
+func Run(src ViewSource, start, stopAt time.Time, stop <-chan struct{}, sessionEnding func()) Choice {
 	choice := make(chan Choice, 1) // filled before systray.Quit, so it's ready when Run returns
 	onReady := func() {
 		systray.SetIcon(Icon())
@@ -31,7 +36,14 @@ func Run(src ViewSource, start, stopAt time.Time, stop <-chan struct{}) Choice {
 			systray.Quit()
 		}()
 	}
-	systray.Run(onReady, func() {})
+	onExit := func() {
+		// systray calls this once: after Quit (a choice is waiting), or on
+		// WM_ENDSESSION / WM_DESTROY without one.
+		if len(choice) == 0 && sessionEnding != nil {
+			sessionEnding()
+		}
+	}
+	systray.Run(onReady, onExit)
 
 	select {
 	case c := <-choice:

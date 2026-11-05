@@ -120,3 +120,58 @@ func TestGamePickerLayoutFits(t *testing.T) {
 		}
 	}
 }
+
+func cjkLibrary() map[uint32]*steam.Game {
+	library := testLibrary()
+	library[1] = &steam.Game{AppID: 1, Name: "東方紅魔郷 〜 the Embodiment of Scarlet Devil 東方紅魔郷", Minutes: 600}
+	library[2] = &steam.Game{AppID: 2, Name: "原神 原神 原神 原神 原神 原神 原神 原神 原神 原神 原神 原神", Minutes: 500}
+	library[3] = &steam.Game{AppID: 3, Name: "ＦＵＬＬＷＩＤＴＨ ＴＩＴＬＥ 🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮", Minutes: 400}
+	return library
+}
+
+func TestGamePickerLayoutFitsWideCharacters(t *testing.T) {
+	for _, size := range consoleSizes {
+		c := ui.NewGamePicker(cjkLibrary(), nil, idler.MaxGames)
+		press(t, c, keySpace, "東")
+		checkFrame(t, c.Render(size[0], size[1]), size[0], size[1])
+		press(t, c, ctrlU)
+		checkFrame(t, c.Render(size[0], size[1]), size[0], size[1])
+	}
+}
+
+func TestCellWidth(t *testing.T) {
+	for s, want := range map[string]int{"Rust": 4, "原神": 4, "ＡＢ": 4, "🎮": 2, "é": 1, "é": 1, "…◆●": 3} {
+		if got := ui.CellWidth(s); got != want {
+			t.Errorf("CellWidth(%q) = %d, want %d", s, got, want)
+		}
+	}
+}
+
+func TestGamePickerKeysSplitAcrossReads(t *testing.T) {
+	// An arrow key cut after its Esc is still an arrow, not Esc (cancel).
+	c := ui.NewGamePicker(testLibrary(), nil, idler.MaxGames)
+	if done, err := c.Feed("\x1b", "[B", keyEnter); !done || err != nil || fmt.Sprint(c.Checked()) != "[284160]" {
+		t.Fatalf("split down arrow then enter: done=%v err=%v checked=%v", done, err, c.Checked())
+	}
+
+	// A UTF-8 character cut in two reaches the search whole.
+	c = ui.NewGamePicker(cjkLibrary(), nil, idler.MaxGames)
+	east := []byte("東")
+	c.Feed(string(east[:1]), string(east[1:]))
+	if rows := c.Rows(); len(rows) != 1 || !strings.HasPrefix(rows[0], "東方") {
+		t.Fatalf("searching a split 東 gave %v", rows)
+	}
+
+	// A lone Esc with nothing after it still cancels.
+	c = ui.NewGamePicker(testLibrary(), nil, idler.MaxGames)
+	if _, err := c.Feed("ru", keyEsc); !errors.Is(err, ui.ErrCancelled) {
+		t.Fatalf("a lone esc should cancel, got %v", err)
+	}
+
+	// A broken byte never lands in the search box.
+	c = ui.NewGamePicker(testLibrary(), nil, idler.MaxGames)
+	c.Feed("\xff")
+	if rows := c.Rows(); len(rows) != len(testLibrary()) {
+		t.Fatalf("an invalid byte changed the search: %v", rows)
+	}
+}

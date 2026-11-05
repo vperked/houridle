@@ -30,7 +30,7 @@ import (
 	"houridle/src/ui"
 )
 
-const version = "1.4.5"
+const version = "1.4.6"
 
 func main() {
 	os.Exit(run())
@@ -41,14 +41,9 @@ func main() {
 const startCommand = "start"
 
 func run() int {
-	sessionMode := false
 	if len(os.Args) > 1 {
 		if cmd, ok := commands[os.Args[1]]; ok {
 			return cmd(os.Args[2:])
-		}
-		if os.Args[1] == startCommand {
-			sessionMode = true
-			os.Args = append(os.Args[:1:1], os.Args[2:]...)
 		}
 	}
 	listFlag := flag.Bool("list", false, "list your games")
@@ -61,7 +56,13 @@ func run() int {
 	idleHelperFlag := flag.Uint(idler.HelperFlag, 0, "internal: run as the idle helper for this app ID")
 	achievementsHelperFlag := flag.Uint(achievements.HelperFlag, 0, "internal: run as the achievements helper for this app ID")
 	flag.Usage = func() { ui.PrintUsage(version, handover.TraySupported) }
-	flag.Parse()
+	// Flags may come after app IDs or `start` (houridle start 730 -stop 3h).
+	flag.CommandLine.Parse(config.FlagsFirst(flag.CommandLine, os.Args[1:]))
+	args := flag.Args()
+	sessionMode := len(args) > 0 && args[0] == startCommand
+	if sessionMode {
+		args = args[1:]
+	}
 
 	// Helper processes started by houridle itself.
 	switch {
@@ -118,15 +119,15 @@ func run() int {
 				return ui.Fatal(fmt.Errorf("couldn't load your games: %w", err))
 			}
 		}
-		ui.PrintGameList(library, strings.Join(flag.Args(), " "))
+		ui.PrintGameList(library, strings.Join(args, " "))
 		return 0
 	case *achievementsFlag:
-		return runAchievements(appDir, steamDir, *libFlag, library, flag.Args())
+		return runAchievements(appDir, steamDir, *libFlag, library, args)
 	case *autostartFlag != "":
 		return setAutostart(appDir, steamDir, *libFlag, *autostartFlag)
 	}
 
-	appIDs, err := chooseGames(appDir, library, flag.Args(), *setupFlag, loadOwned)
+	appIDs, err := chooseGames(appDir, library, args, *setupFlag, loadOwned)
 	if errors.Is(err, ui.ErrCancelled) {
 		ui.Notice("cancelled, nothing changed")
 		return 0
@@ -158,7 +159,9 @@ func run() int {
 		return ui.Fatal(err)
 	}
 	defer r.lock.Release()
-	r.log, _ = eventlog.Open(appDir) // idling still works if the log can't be written
+	if r.log, err = eventlog.Open(appDir); err != nil {
+		ui.Warn("couldn't open houridle.log, idling without it: " + err.Error())
+	}
 	defer r.log.Close()
 	r.games = steam.ResolveGames(appIDs, library)
 	if inTrayProcess {
@@ -250,7 +253,11 @@ func chooseGames(appDir string, library map[uint32]*steam.Game, args []string, f
 		if len(library) == 0 {
 			return nil, errors.New("no games to pick from on this computer: pass app IDs (houridle start 730 440), or install Steam here to choose from your library")
 		}
-		picked, err := ui.PickGames(library, cfg.Games)
+		preselected := cfg.Games
+		if len(appIDs) > 0 { // -setup 730 440: start from these
+			preselected = appIDs
+		}
+		picked, err := ui.PickGames(library, preselected)
 		if err != nil {
 			return nil, err
 		}

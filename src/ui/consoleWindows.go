@@ -4,10 +4,17 @@ package ui
 
 import (
 	"os"
+	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// exitSignals end houridle from outside: Ctrl+Break, or the console window
+// closing (which Go reports as SIGTERM). While the console is in raw mode,
+// houridle catches them to put it back first.
+var exitSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 var kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 
@@ -50,6 +57,11 @@ func enableRawInput() (restore func(), err error) {
 	}
 	return func() { windows.SetConsoleMode(h, old) }, nil
 }
+
+// inputPending reports whether more input is on its way. The Windows console
+// hands over a whole escape sequence in one read, so there is never the rest
+// of a key to wait for.
+func inputPending(time.Duration) bool { return false }
 
 // launchedByDoubleClick is true when houridle owns its console window (opened
 // from Explorer), so the window would vanish the moment we exit.

@@ -43,12 +43,22 @@ type SessionSupervisor struct {
 	onEvent func(Event)
 	wg      sync.WaitGroup
 
+	// playMu orders the state set right after signing in with the state
+	// onPlaying sets, so a change reported in between can't be overwritten
+	// by the older reading.
+	playMu sync.Mutex
+
 	mu      sync.Mutex // guards the fields below
 	state   State
 	since   time.Time
 	banked  time.Duration
 	note    string
 	lastMsg string // last warning/error shown, so retries don't repeat it
+
+	// unsaved is a renewed sign-in Steam issued that couldn't be written to
+	// disk. It is used for the next connections (and saving retried), so a
+	// failed save never sends houridle back to the token it replaced.
+	unsaved *steamauth.Session
 }
 
 // NewSession prepares a supervisor for games using the saved session in mgr.
@@ -149,7 +159,7 @@ func (s *SessionSupervisor) currentNote() string {
 // connection ends. wait is how long to pause before the next attempt (0 for
 // the default backoff); connected says whether we got signed in.
 func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, connected bool) {
-	sess, err := s.mgr.Current()
+	sess, err := s.current()
 	switch {
 	case ctx.Err() != nil:
 		return 0, false
@@ -180,12 +190,14 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 	s.mu.Lock()
 	s.lastMsg = ""
 	s.mu.Unlock()
+	s.playMu.Lock()
 	if cs.Blocked() {
 		s.setState(StateWaiting, sessionNoteInUse)
 	} else {
 		s.setState(StateIdling, "")
 		s.emit(EventGood, fmt.Sprintf("Signed in as %s, idling %d game(s)", accountLabel(sess), len(s.games)))
 	}
+	s.playMu.Unlock()
 
 	s.renewSignIn(ctx, cs, sess)
 	renew := time.NewTicker(renewEvery)
@@ -195,7 +207,7 @@ func (s *SessionSupervisor) once(ctx context.Context) (wait time.Duration, conne
 		case <-ctx.Done():
 			return 0, true
 		case <-renew.C:
-			if cur, err := s.mgr.Current(); err == nil {
+			if cur, err := s.current(); err == nil {
 				s.renewSignIn(ctx, cs, cur)
 			}
 		case <-cs.Done():
@@ -220,11 +232,54 @@ func (s *SessionSupervisor) renewSignIn(ctx context.Context, cs *steamcm.Session
 	}
 	updated, err := s.mgr.Adopt(sess, token)
 	switch {
+	case errors.Is(err, steamauth.ErrRenewedNotSaved):
+		s.mu.Lock()
+		s.unsaved = &updated
+		s.mu.Unlock()
+		s.warn(EventWarn, err.Error()+". Using it anyway, and trying to save it again on the next connection.")
 	case err != nil:
 		s.warn(EventWarn, err.Error())
 	case updated.RefreshToken != sess.RefreshToken:
 		s.emit(EventGood, "Renewed the saved sign-in, good until "+updated.Expires.Format("2006-01-02"))
 	}
+}
+
+// current is the saved sign-in, or the renewed one that couldn't be saved
+// if that is newer and for the same account. Saving it is retried here.
+func (s *SessionSupervisor) current() (steamauth.Session, error) {
+	sess, err := s.mgr.Current()
+	if err != nil && !errors.Is(err, steamauth.ErrSessionExpired) {
+		return sess, err
+	}
+	s.mu.Lock()
+	pending := s.unsaved
+	s.mu.Unlock()
+	if pending == nil {
+		return sess, err
+	}
+	if pending.SteamID != sess.SteamID || !pending.Expires.After(sess.Expires) {
+		// The saved one changed since (houridle login): it wins.
+		s.forgetUnsaved(pending)
+		return sess, err
+	}
+	updated, aerr := s.mgr.Adopt(sess, pending.RefreshToken)
+	switch {
+	case aerr == nil:
+		s.forgetUnsaved(pending)
+		s.emit(EventGood, "Saved the renewed sign-in, good until "+updated.Expires.Format("2006-01-02"))
+	case !errors.Is(aerr, steamauth.ErrRenewedNotSaved):
+		s.forgetUnsaved(pending)
+		return sess, err
+	}
+	return updated, nil
+}
+
+func (s *SessionSupervisor) forgetUnsaved(which *steamauth.Session) {
+	s.mu.Lock()
+	if s.unsaved == which {
+		s.unsaved = nil
+	}
+	s.mu.Unlock()
 }
 
 func accountLabel(sess steamauth.Session) string {
@@ -236,6 +291,8 @@ func accountLabel(sess steamauth.Session) string {
 
 // onPlaying runs when another device starts or stops playing on the account.
 func (s *SessionSupervisor) onPlaying(blocked bool, _ uint32) {
+	s.playMu.Lock()
+	defer s.playMu.Unlock()
 	if blocked {
 		s.setState(StateWaiting, sessionNoteInUse)
 		s.emit(EventWarn, "You're playing on another device; idling pauses until you stop")
