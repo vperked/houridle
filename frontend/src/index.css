@@ -45,6 +45,11 @@
   }
 }
 
+/* Shown only when loading takes a moment. */
+.loading-late {
+  animation: fade 200ms ease-out 400ms both;
+}
+
 @keyframes fade {
   from {
     opacity: 0;

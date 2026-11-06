@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import GameArt from "../components/GameArt.tsx";
 import { Checkbox, Switch } from "../components/Checkbox.tsx";
-import { ActionBar, Empty, ErrorState, Group, Icon, Page, Search, Segmented, SelectRow, Skeleton } from "../components/ui.tsx";
+import { ActionBar, Empty, ErrorState, Group, Icon, Page, Pager, Search, Segmented, SelectRow, Skeleton } from "../components/ui.tsx";
 import { api } from "../lib/api.ts";
 import { hours, plural } from "../lib/format.ts";
 import { useAction, useToast } from "../components/toast.tsx";
 import { useLibrary } from "../hooks/useLibrary.ts";
 import { useDrops } from "../hooks/useDrops.ts";
+import { usePages } from "../hooks/usePages.ts";
 import type { SegmentOption } from "../components/ui.tsx";
 import type { Go } from "../App.tsx";
 import type { IdleMode, LibraryGame, Panel, ScheduleInfo, Settings } from "../lib/types.ts";
@@ -130,6 +131,9 @@ function SourcePicker({ panel, refresh, goTo }: ScreenProps) {
   );
 }
 
+const PAGE = 50; // games a page
+const byName = new Intl.Collator().compare; // one collator, not one per comparison
+
 const SORTS: [string, string][] = [
   ["played", "Most played"],
   ["least", "Least played"],
@@ -160,23 +164,28 @@ function GamePicker({ source, picked, onChange, max, signedIn }: GamePickerProps
   const pickedSet = useMemo(() => new Set(picked), [picked]);
 
   const q = query.trim().toLowerCase();
-  const shown = useMemo(() => {
-    let list = games ?? [];
-    // Picked games that aren't in the library (passed by app ID) still show.
-    const inLibrary = new Set(list.map((g) => g.appId));
-    const missing = picked.filter((id) => !inLibrary.has(id)).map((id) => ({ appId: id, name: `App ${id}`, minutes: 0 }));
-    list = [...missing, ...list];
-    if (onlyPicked) list = list.filter((g) => pickedSet.has(g.appId));
-    if (q) list = list.filter((g) => g.name.toLowerCase().includes(q) || String(g.appId) === q);
+  // Searching and sorting the library is the slow part, so it doesn't
+  // depend on what's picked: ticking a game doesn't sort it all again.
+  const matches = (g: LibraryGame) => !q || g.name.toLowerCase().includes(q) || String(g.appId) === q;
+  const sorted = useMemo(() => {
     const d = (g: LibraryGame) => drops?.[g.appId] ?? 0;
     const sorts: Record<string, (a: LibraryGame, b: LibraryGame) => number> = {
       played: (a, b) => b.minutes - a.minutes,
       least: (a, b) => a.minutes - b.minutes,
       drops: (a, b) => d(b) - d(a) || b.minutes - a.minutes,
-      name: (a, b) => a.name.localeCompare(b.name),
+      name: (a, b) => byName(a.name, b.name),
     };
-    return [...list].sort(sorts[sort]);
-  }, [games, picked, pickedSet, onlyPicked, q, sort, drops]);
+    return (games ?? []).filter(matches).sort(sorts[sort]);
+  }, [games, q, sort, drops]); // eslint-disable-line react-hooks/exhaustive-deps
+  const inLibrary = useMemo(() => new Set((games ?? []).map((g) => g.appId)), [games]);
+  const shown = useMemo(() => {
+    // Picked games that aren't in the library (passed by app ID) still show, first.
+    const missing = picked.filter((id) => !inLibrary.has(id)).map((id): LibraryGame => ({ appId: id, name: `App ${id}`, minutes: 0 })).filter(matches);
+    const list = missing.length ? [...missing, ...sorted] : sorted;
+    return onlyPicked ? list.filter((g) => pickedSet.has(g.appId)) : list;
+  }, [sorted, inLibrary, picked, pickedSet, onlyPicked]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const p = usePages(shown, PAGE, `${onlyPicked}|${q}|${sort}|${source}`);
 
   const toggle = (id: number) => onChange(pickedSet.has(id) ? picked.filter((x) => x !== id) : [...picked, id]);
   const atMax = !!max && picked.length >= max;
@@ -237,34 +246,35 @@ function GamePicker({ source, picked, onChange, max, signedIn }: GamePickerProps
         ) : shown.length === 0 ? (
           <Empty icon="search">{q ? "No games match." : onlyPicked ? "Nothing picked yet." : "No games."}</Empty>
         ) : (
-          <ul className="rows max-h-[30rem] overflow-y-auto overscroll-contain">
-            {shown.slice(0, 300).map((g) => {
-              const on = pickedSet.has(g.appId);
-              const d = drops?.[g.appId];
-              return (
-                <li key={g.appId}>
-                  <label className={`row row-tap cursor-pointer ${!on && atMax ? "opacity-40" : ""}`}>
-                    <Checkbox checked={on} disabled={!on && atMax} onChange={() => toggle(g.appId)} label={g.name} />
-                    <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px]">{g.name}</span>
-                      <span className="sub block truncate text-[13px]">
-                        {g.shared ? <span className="text-accent">Family · </span> : null}
-                        {g.minutes ? hours(g.minutes * 60) : g.shared ? "Shared with you" : "Never played"}
-                        {(d ?? 0) > 0 && <span className="text-accent"> · {d} card drop{d === 1 ? "" : "s"}</span>}
+          <>
+            <ul ref={p.ref} className="rows max-h-[30rem] overflow-y-auto overscroll-contain">
+              {p.items.map((g) => {
+                const on = pickedSet.has(g.appId);
+                const d = drops?.[g.appId];
+                return (
+                  <li key={g.appId}>
+                    <label className={`row row-tap cursor-pointer ${!on && atMax ? "opacity-40" : ""}`}>
+                      <Checkbox checked={on} disabled={!on && atMax} onChange={() => toggle(g.appId)} label={g.name} />
+                      <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px]">{g.name}</span>
+                        <span className="sub block truncate text-[13px]">
+                          {g.shared ? <span className="text-accent">Family · </span> : null}
+                          {g.minutes ? hours(g.minutes * 60) : g.shared ? "Shared with you" : "Never played"}
+                          {(d ?? 0) > 0 && <span className="text-accent"> · {d} card drop{d === 1 ? "" : "s"}</span>}
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <Pager {...p} />
+          </>
         )}
       </div>
       <p className="sub px-4 pt-2 text-[13px]">
-        {shown.length > 300
-          ? `Showing 300 of ${shown.length}. Search to narrow it down.`
-          : atMax
+        {atMax
             ? `Through the Steam client, at most ${max} games at once.`
             : !max && picked.length > 32
               ? `Steam counts 32 at a time, so these ${picked.length} take turns.`

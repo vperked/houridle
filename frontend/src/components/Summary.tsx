@@ -57,7 +57,7 @@ export default function Summary({ data, games, now, extra, state }: SummaryProps
             </span>
             <span className={`truncate first-letter:uppercase ${live ? "text-good" : "sub"}`}>{label}</span>
           </span>
-          {data && <span className="faint num shrink-0">Up {span(uptime)}</span>}
+          {data && <span className="sub num shrink-0">Up {span(uptime)}</span>}
         </div>
         <div className="mt-3 flex items-baseline gap-2">
           <Roll value={idling || (data ? games.length : 0)} className="text-[44px] leading-none font-semibold tracking-[-0.03em]" />
@@ -68,7 +68,7 @@ export default function Summary({ data, games, now, extra, state }: SummaryProps
             <Roll value={clock(runSecs)} /> idled this run
           </div>
         )}
-        {how && <p className="faint mt-3 text-[13px]">{how}</p>}
+        {how && <p className="sub mt-3 text-[13px]">{how}</p>}
       </div>
       <div className="relative border-t border-line">
         <Stats>
@@ -79,7 +79,7 @@ export default function Summary({ data, games, now, extra, state }: SummaryProps
       </div>
       {stats && <Milestone total={allTime} rate={live ? idling : 0} />}
       {extras.length > 0 && (
-        <div className="rows border-t border-line">
+        <div className="rows relative border-t border-line">
           {extras.map(([k, v]) => (
             <div key={k} className="flex h-11 items-center justify-between px-5 text-[14px]">
               <span className="sub">{k}</span>

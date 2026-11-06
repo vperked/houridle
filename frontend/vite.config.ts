@@ -8,7 +8,7 @@ import { isScenario, mockApi } from "./mock/plugin.ts";
 //
 // `npm run dev` serves the page with hot reload. By default /api answers
 // with test data (mock/), so no houridle is needed; MOCK picks a scenario
-// (panel, status, empty, offline, unauthorized). With HOURIDLE_URL set,
+// (panel, status, big, empty, offline, unauthorized). With HOURIDLE_URL set,
 // /api goes to that running houridle instead, signed in with its key from
 // HOURIDLE_KEY (see `houridle web`).
 export default defineConfig(({ command }) => {
@@ -19,7 +19,7 @@ export default defineConfig(({ command }) => {
       console.log(`houridle: live data from ${live}`);
     } else {
       const scenario = isScenario(process.env.MOCK) ? process.env.MOCK : "panel";
-      if (process.env.MOCK && process.env.MOCK !== scenario) console.log(`houridle: MOCK=${process.env.MOCK} isn't a scenario (panel, status, empty, offline, unauthorized)`);
+      if (process.env.MOCK && process.env.MOCK !== scenario) console.log(`houridle: MOCK=${process.env.MOCK} isn't a scenario (panel, status, big, empty, offline, unauthorized)`);
       console.log(`houridle: test data, scenario "${scenario}" (MOCK=… or ?mock=… to change; HOURIDLE_URL=… for a real houridle)`);
       plugins.push(mockApi(scenario));
     }

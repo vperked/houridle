@@ -4,8 +4,8 @@ import type { Achievement, BadgeInfo, BoosterList, Deal, DripInfo, ExtraInfo, Fr
 import * as data from "./data.ts";
 import type { CatalogGame, FreeToPlayEntry } from "./data.ts";
 
-export type Scenario = "panel" | "status" | "empty" | "offline" | "unauthorized";
-export const SCENARIOS: Scenario[] = ["panel", "status", "empty", "offline", "unauthorized"];
+export type Scenario = "panel" | "status" | "big" | "empty" | "offline" | "unauthorized";
+export const SCENARIOS: Scenario[] = ["panel", "status", "big", "empty", "offline", "unauthorized"];
 
 const HISTORY_DAYS = 84; // like houridle: 12 weeks for the calendar
 const VERSION = "1.6.2";
@@ -52,8 +52,9 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 export function createState(scenario: Scenario, now = Date.now()): MockState {
   const empty = scenario === "empty";
+  const big = scenario === "big";
   const settings: Settings = {
-    mode: "games",
+    mode: big ? "all" : "games",
     games: empty ? [] : [620, 105600, 413150, 367520, 1145360, 292030, 268910, 504230],
     until: "",
     rotate: "",
@@ -96,7 +97,7 @@ export function createState(scenario: Scenario, now = Date.now()): MockState {
     days: empty ? Array<number>(HISTORY_DAYS).fill(0) : data.dailySeconds(HISTORY_DAYS, 41),
     since: empty ? undefined : 41,
     panel,
-    libraries: empty ? {} : { [data.MAIN_ID]: [...data.LIBRARY], client: [...data.LIBRARY], [data.ALT_ID]: [...data.ALT_LIBRARY] },
+    libraries: empty ? {} : { [data.MAIN_ID]: big ? data.bigLibrary(640) : [...data.LIBRARY], client: [...data.LIBRARY], [data.ALT_ID]: [...data.ALT_LIBRARY] },
     gamesBySource: { [data.MAIN_ID]: settings.games, [data.ALT_ID]: [105600, 646570] },
     achievements: empty ? {} : { 620: data.achievementsFor(620), 105600: data.achievementsFor(105600), 413150: data.achievementsFor(413150) },
     owned: empty ? {} : structuredClone(data.OWNED),

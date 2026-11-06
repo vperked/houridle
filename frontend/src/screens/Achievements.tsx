@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import GameArt from "../components/GameArt.tsx";
 import { Checkbox } from "../components/Checkbox.tsx";
-import { ActionBar, Badge, Empty, ErrorState, Fill, Group, Icon, Note, Page, Search, Segmented, SelectRow, Sheet, Skeleton } from "../components/ui.tsx";
+import { ActionBar, Badge, Empty, ErrorState, Fill, Group, Icon, Note, Page, Pager, Search, Segmented, SelectRow, Sheet, Skeleton } from "../components/ui.tsx";
 import { api, errorText } from "../lib/api.ts";
 import { useAction, useToast } from "../components/toast.tsx";
 import { celebrate } from "../lib/fx.ts";
 import { useLibrary } from "../hooks/useLibrary.ts";
+import { usePages } from "../hooks/usePages.ts";
 import { plural } from "../lib/format.ts";
 import type { Achievement, AchievementsSaved, BulkAchievements, BulkResult, DripInfo, LibraryGame, Panel } from "../lib/types.ts";
 
@@ -36,6 +37,7 @@ function GameList({ source, onPick, drips }: { source: string; onPick: (game: Ga
   const [bulk, setBulk] = useState(false);
   const q = query.trim().toLowerCase();
   const shown = useMemo(() => (games ?? []).filter((g) => !q || g.name.toLowerCase().includes(q) || String(g.appId) === q), [games, q]);
+  const p = usePages(shown, PAGE, q);
   const pickedSet = useMemo(() => new Set(picked), [picked]);
   const pickedGames = useMemo(() => {
     const byId = new Map((games ?? []).map((g) => [g.appId, g]));
@@ -91,26 +93,29 @@ function GameList({ source, onPick, drips }: { source: string; onPick: (game: Ga
           ) : shown.length === 0 ? (
             <Empty icon="search">No games match.</Empty>
           ) : (
-            <ul className="rows max-h-[36rem] overflow-y-auto overscroll-contain">
-              {shown.slice(0, 300).map((g) => (
-                <li key={g.appId}>
-                  {selecting ? (
-                    <label className="row row-tap cursor-pointer">
-                      <Checkbox checked={pickedSet.has(g.appId)} disabled={!pickedSet.has(g.appId) && picked.length >= MAX_BULK} onChange={() => toggle(g.appId)} label={g.name} />
-                      <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
-                      <span className="min-w-0 flex-1 truncate">{g.name}</span>
-                    </label>
-                  ) : (
-                    <button type="button" onClick={() => onPick(g)} className="row row-tap">
-                      <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
-                      <span className="min-w-0 flex-1 truncate">{g.name}</span>
-                      {g.shared && <Badge>Family</Badge>}
-                      <Icon name="chevron" className="faint size-4" strokeWidth={2.2} />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul ref={p.ref} className="rows max-h-[36rem] overflow-y-auto overscroll-contain">
+                {p.items.map((g) => (
+                  <li key={g.appId}>
+                    {selecting ? (
+                      <label className="row row-tap cursor-pointer">
+                        <Checkbox checked={pickedSet.has(g.appId)} disabled={!pickedSet.has(g.appId) && picked.length >= MAX_BULK} onChange={() => toggle(g.appId)} label={g.name} />
+                        <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
+                        <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                      </label>
+                    ) : (
+                      <button type="button" onClick={() => onPick(g)} className="row row-tap">
+                        <GameArt appId={g.appId} name={g.name} className="h-8 w-[75px]" />
+                        <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                        {g.shared && <Badge>Family</Badge>}
+                        <Icon name="chevron" className="faint size-4" strokeWidth={2.2} />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <Pager {...p} />
+            </>
           )}
         </div>
         {!selecting && (games?.length ?? 0) > 1 && <p className="sub px-4 pt-2 text-[13px]">Tap a game to pick achievements, or Select to unlock everything in several games at once.</p>}
@@ -136,6 +141,7 @@ function GameList({ source, onPick, drips }: { source: string; onPick: (game: Ga
   );
 }
 
+const PAGE = 50; // games a page
 const MAX_BULK = 100;
 const CHUNK = 4; // games per request: keeps each well inside the page's time limit, and shows progress
 

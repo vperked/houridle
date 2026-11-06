@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import GameArt from "./GameArt.tsx";
 import { Empty, Group, Stat, Stats } from "./ui.tsx";
 import { dayLabel, hours } from "../lib/format.ts";
@@ -15,7 +15,7 @@ export default function History({ stats, extra, columns }: { stats: StatsData | 
     );
   }
   return (
-    <div className={`space-y-7 ${columns ? "lg:grid lg:grid-cols-2 lg:items-start lg:gap-8 lg:space-y-0 [&>*]:min-w-0" : ""}`}>
+    <div className={`space-y-7 ${columns ? "xl:grid xl:grid-cols-2 xl:items-start xl:gap-8 xl:space-y-0 [&>*]:min-w-0" : ""}`}>
       <div className="space-y-7">
         <Group footer="Game-hours: idling 3 games for an hour counts as 3." flush>
           <Stats>
@@ -82,7 +82,8 @@ function DayChart({ days, since, todayExtra }: { days: Day[]; since?: string; to
   );
 }
 
-function TopGames({ games }: { games: GameTotal[] }) {
+// TopGames is memoized: its totals come with each status poll, not each tick.
+const TopGames = memo(function TopGames({ games }: { games: GameTotal[] }) {
   if (!games.length) return <Empty icon="history">Nothing yet</Empty>;
   const most = Math.max(1, ...games.map((g) => g.all));
   return games.map((g) => (
@@ -102,7 +103,7 @@ function TopGames({ games }: { games: GameTotal[] }) {
       </div>
     </div>
   ));
-}
+});
 
 // Calendar is a grid of days, one column per week, darker for more hours,
 // with streaks: days in a row with some idling.

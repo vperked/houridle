@@ -1,14 +1,15 @@
 import { memo, useMemo, useState } from "react";
 import GameArt from "./GameArt.tsx";
-import { Badge, Empty, Fill, Search, Segmented, Skeleton } from "./ui.tsx";
+import { Badge, Empty, Fill, Pager, Search, Segmented, Skeleton } from "./ui.tsx";
 import type { BadgeTone, SegmentOption } from "./ui.tsx";
 import { clock, hours, target, truthy } from "../lib/format.ts";
 import { stateOf } from "../lib/states.ts";
 import { load, save } from "../lib/storage.ts";
+import { usePages } from "../hooks/usePages.ts";
 import type { Game, GameState } from "../lib/types.ts";
 
 const SEARCH_FROM = 8; // show the search box from this many games
-const MAX_ROWS = 200; // rows drawn at once (every-game mode can have thousands)
+const PAGE = 50; // rows a page (every-game mode can have thousands)
 
 const TONE: Partial<Record<GameState, BadgeTone>> = { idling: "good", failing: "bad", starting: "warn", waiting: "warn", done: "accent" };
 
@@ -38,7 +39,8 @@ export default function Games({ games, loading }: { games: Game[]; loading: bool
   const active = filters.some((f) => f.value === filter) ? filter : "all";
 
   const q = query.trim().toLowerCase();
-  const shown = games.filter((g) => (active === "all" || g.state === active) && (!q || g.name.toLowerCase().includes(q) || String(g.appId) === q));
+  const shown = useMemo(() => games.filter((g) => (active === "all" || g.state === active) && (!q || g.name.toLowerCase().includes(q) || String(g.appId) === q)), [games, active, q]);
+  const p = usePages(shown, PAGE, `${active}|${q}`);
   const tools = filters.length > 2 || games.length >= SEARCH_FROM;
 
   return (
@@ -50,17 +52,19 @@ export default function Games({ games, loading }: { games: Game[]; loading: bool
           {filters.length > 2 && <Segmented label="Filter games" options={filters} value={active} onChange={setFilter} />}
         </div>
       )}
-      <div className="surface rows overflow-hidden">
+      <div ref={p.ref} className="surface overflow-hidden">
         {games.length === 0 ? (
           loading ? <Skeleton art /> : <Empty icon="play">No games yet. houridle is still reading them from Steam.</Empty>
         ) : shown.length === 0 ? (
           <Empty icon="search">No games match.</Empty>
         ) : (
           <>
-            {shown.slice(0, MAX_ROWS).map((g) => (
-              <GameRow key={g.appId} game={g} />
-            ))}
-            {shown.length > MAX_ROWS && <p className="sub px-4 py-3 text-center text-[13px]">Showing {MAX_ROWS} of {shown.length}. Search or filter to find the rest.</p>}
+            <div className="rows">
+              {p.items.map((g) => (
+                <GameRow key={g.appId} game={g} />
+              ))}
+            </div>
+            <Pager {...p} />
           </>
         )}
       </div>

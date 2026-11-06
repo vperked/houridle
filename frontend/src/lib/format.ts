@@ -50,11 +50,22 @@ export interface DayLabel {
   long: string;
 }
 
-// "Mon" / "3" style labels for a YYYY-MM-DD day.
+const WEEKDAY = new Intl.DateTimeFormat([], { weekday: "short" });
+const SHORT_DAY = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
+const LONG_DAY = new Intl.DateTimeFormat([], { weekday: "long", month: "short", day: "numeric" });
+const dayLabels = new Map<string, DayLabel>();
+
+// "Mon" / "3" style labels for a YYYY-MM-DD day. Remembered: the History
+// tab labels its 84 days again with every tick of the clock.
 export function dayLabel(ymd: string): DayLabel {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  return { weekday: date.toLocaleDateString([], { weekday: "short" }), day: d, short: date.toLocaleDateString([], { month: "short", day: "numeric" }), long: date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) };
+  let label = dayLabels.get(ymd);
+  if (!label) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    label = { weekday: WEEKDAY.format(date), day: d, short: SHORT_DAY.format(date), long: LONG_DAY.format(date) };
+    dayLabels.set(ymd, label);
+  }
+  return label;
 }
 
 // A Steam review summary on one line: "Very Positive · 92% of 1.2k".

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { keep } from "../lib/keep.ts";
 import type { Status } from "../lib/types.ts";
 
 const REFRESH_MS = 5000;
@@ -22,8 +23,26 @@ export function useStatus(): StatusHook {
   const [state, setState] = useState<LoadState>("loading");
   const [fetchedAt, setFetchedAt] = useState(0);
   const stopped = useRef(false);
+  const busy = useRef<Promise<void> | null>(null);
+  const again = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
+  // One request at a time: if houridle is slow, polls wait for the answer
+  // instead of piling up, and an old answer never lands after a newer one.
+  // A refresh asked for meanwhile (say, after a button press) runs once the
+  // current one is back, so it sees the change.
+  const refresh = useCallback((): Promise<void> => {
+    if (busy.current) {
+      again.current ??= busy.current.then(() => {
+        again.current = null;
+        return refresh();
+      });
+      return again.current;
+    }
+    busy.current = load().finally(() => (busy.current = null));
+    return busy.current;
+  }, []); // load only uses refs and setters
+
+  async function load() {
     if (stopped.current) return;
     try {
       const r = await fetch("/api/status", { cache: "no-store" });
@@ -32,13 +51,14 @@ export function useStatus(): StatusHook {
         return;
       }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setData(await r.json());
+      const next: Status = await r.json();
+      setData((prev) => keep(prev, next));
       setFetchedAt(Date.now());
       setState("ok");
     } catch {
       if (!stopped.current) setState("offline");
     }
-  }, []);
+  }
 
   useEffect(() => {
     refresh();
@@ -65,9 +85,10 @@ export function useStatus(): StatusHook {
   return { data, state, fetchedAt, refresh, markStopped };
 }
 
-// useNow re-renders every second, so running clocks tick between refreshes.
-// It rests while the page is in the background, and catches up on return.
-export function useNow(): number {
+// useNow re-renders every second, so running clocks tick between refreshes;
+// with nothing ticking (fast false), only every 30 s. It rests while the
+// page is in the background, and catches up on return.
+export function useNow(fast = true): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let t = 0;
@@ -75,7 +96,7 @@ export function useNow(): number {
       clearInterval(t);
       if (document.visibilityState !== "visible") return;
       setNow(Date.now());
-      t = setInterval(() => setNow(Date.now()), 1000);
+      t = setInterval(() => setNow(Date.now()), fast ? 1000 : 30_000);
     };
     start();
     document.addEventListener("visibilitychange", start);
@@ -83,6 +104,6 @@ export function useNow(): number {
       clearInterval(t);
       document.removeEventListener("visibilitychange", start);
     };
-  }, []);
+  }, [fast]);
   return now;
 }

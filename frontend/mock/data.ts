@@ -247,3 +247,18 @@ export function dailySeconds(n: number, since: number): number[] {
     return Math.round((4 + rand() * 30) * 3600); // game-hours: several games at once
   });
 }
+
+// bigLibrary is LIBRARY plus n made-up games (no pictures), for seeing how
+// the page copes with a library of hundreds.
+export function bigLibrary(n: number): CatalogGame[] {
+  const first = ["Iron", "Hollow", "Neon", "Silent", "Crimson", "Lost", "Tiny", "Star", "Deep", "Wild", "Frozen", "Last"];
+  const second = ["Harbor", "Crown", "Signal", "Forge", "Garden", "Drift", "Tower", "Echo", "Run", "Kingdom", "Circuit", "Tides"];
+  let seed = 11;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const made = Array.from({ length: n }, (_, i): CatalogGame => {
+    const name = `${first[i % first.length]} ${second[Math.floor(i / first.length) % second.length]}${i >= first.length * second.length ? ` ${Math.floor(i / (first.length * second.length)) + 1}` : ""}`;
+    const played = rand() < 0.35 ? 0 : Math.round(rand() * rand() * 6000);
+    return { appId: 3_000_000 + i * 10, name, minutes: played, drops: rand() < 0.2 ? 1 + Math.floor(rand() * 4) : 0 };
+  });
+  return [...LIBRARY, ...made];
+}

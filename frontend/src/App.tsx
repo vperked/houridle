@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import Activity from "./components/Activity.tsx";
 import Games from "./components/Games.tsx";
@@ -6,18 +6,37 @@ import History from "./components/History.tsx";
 import Summary from "./components/Summary.tsx";
 import BottomNav, { PANEL_TABS, Sidebar } from "./components/Nav.tsx";
 import { Banner, ConfirmStop, Footer, Header, NeedsKey, StopButton } from "./components/Chrome.tsx";
-import { Avatar, Confirm, Icon, Note, Page, Segmented } from "./components/ui.tsx";
-import Idle from "./screens/Idle.tsx";
+import { Avatar, Confirm, Icon, Loading, Note, Page, Segmented } from "./components/ui.tsx";
 import Splash from "./components/Splash.tsx";
 import LevelCard, { useLevel } from "./components/Level.tsx";
 import { hours, plural, truthy } from "./lib/format.ts";
-import Achievements from "./screens/Achievements.tsx";
-import More from "./screens/More.tsx";
 import { api } from "./lib/api.ts";
 import { ToastProvider, useAction, useEventNotifications } from "./components/toast.tsx";
 import { useNow, useStatus } from "./hooks/useStatus.ts";
 import type { StatusHook } from "./hooks/useStatus.ts";
-import type { ExtraInfo, Game, IdleMode, Level, Panel, Standing } from "./lib/types.ts";
+import type { ExtraInfo, Game, IdleMode, Level, Panel, Standing, StatusEvent } from "./lib/types.ts";
+
+// The control panel's other tabs are their own files, fetched when first
+// opened, or as soon as the page is idle after it first shows, so the page
+// starts with less to load and later tabs still open at once.
+const loadIdle = () => import("./screens/Idle.tsx");
+const loadAchievements = () => import("./screens/Achievements.tsx");
+const loadMore = () => import("./screens/More.tsx");
+const Idle = lazy(loadIdle);
+const Achievements = lazy(loadAchievements);
+const More = lazy(loadMore);
+let preloaded = false;
+function preloadScreens() {
+  if (preloaded) return;
+  preloaded = true;
+  const go = () => {
+    loadIdle();
+    loadAchievements();
+    loadMore().then((m) => m.preloadMore());
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(go, { timeout: 3000 });
+  else setTimeout(go, 1000);
+}
 
 // Go opens a tab, and optionally a screen inside it.
 export type Go = (tab: string, sub?: string) => void;
@@ -78,6 +97,10 @@ function Shell() {
   useEventNotifications(data?.events);
   useShortcuts(panel ? panelTabs : statusTabs, setTab);
   const level = useLevel(!!panel?.signedIn);
+  const hasPanel = !!panel;
+  useEffect(() => {
+    if (hasPanel) preloadScreens();
+  }, [hasPanel]);
   const goSub = useCallback((x: string) => setTab("more", x), [setTab]);
 
   if (state === "unauthorized") return <NeedsKey />;
@@ -114,7 +137,9 @@ function Shell() {
           <Segmented label="Sections" options={STATUS_TABS} value={tab} onChange={setTab} />
         </div>
       )}
-      <div key={`${tab}/${sub}`}>{content}</div>
+      <div key={`${tab}/${sub}`}>
+        <Suspense fallback={<Loading />}>{content}</Suspense>
+      </div>
 
       {/* A status page (houridle start -web) can only stop, which ends houridle. */}
       {!panel && state !== "stopped" && data && <StopButton onClick={() => setConfirming(true)} />}
@@ -133,11 +158,13 @@ function Shell() {
   );
 }
 
+const NO_EVENTS: StatusEvent[] = [];
+
 // useLive keeps idling games' clocks ticking between status refreshes. Only
 // the screens that show them use it, so the rest of the page redraws only
 // when new status arrives.
 function useLive({ data, state, fetchedAt }: LiveStatus): { now: number; games: Game[]; extra: number } {
-  const now = useNow();
+  const now = useNow(state === "ok" && !!data?.games?.some((g) => g.state === "idling")); // nothing to tick otherwise
   const since = state === "ok" && fetchedAt ? Math.max(0, (now - fetchedAt) / 1000) : 0;
   const base = data?.games;
   const games = useMemo(
@@ -161,12 +188,12 @@ function NowScreen({ live, refresh, setTab, level }: NowScreenProps) {
   const panel = data.panel;
   const { now, games, extra } = useLive(live);
   const showGames = !panel || panel.idling;
-  const activity = <Activity events={data.events ?? []} />;
+  const activity = <Activity events={data.events ?? NO_EVENTS} />;
   return (
     <Page title={panel ? "Now" : null} wide={!!panel}>
       {/* On a desktop: the status on the left; the games (or, when not
           idling, the activity) on the right. */}
-      <div className={`space-y-7 ${panel ? "lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8 lg:space-y-0" : ""}`}>
+      <div className={`space-y-7 ${panel ? "xl:grid xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] xl:items-start xl:gap-8 xl:space-y-0" : ""}`}>
         <div className="space-y-7">
           <StandingWarning standing={panel?.standing} onOpen={() => setTab("more", "accounts")} />
           {panel && !panel.idling ? (
@@ -179,11 +206,11 @@ function NowScreen({ live, refresh, setTab, level }: NowScreenProps) {
           )}
           {level && <LevelCard level={level} onOpen={() => setTab("more", "badges")} />}
           {panel?.extras?.some((e) => e.on) && <AlsoIdling extras={panel.extras.filter((e) => e.on)} onOpen={() => setTab("more", "accounts")} />}
-          {showGames && panel && <div className="max-lg:hidden">{activity}</div>}
+          {showGames && panel && <div className="max-xl:hidden">{activity}</div>}
         </div>
         <div className="space-y-7">
           {showGames ? <Games games={games} loading={!data} /> : activity}
-          {showGames && <div className={panel ? "lg:hidden" : ""}>{activity}</div>}
+          {showGames && <div className={panel ? "xl:hidden" : ""}>{activity}</div>}
         </div>
       </div>
     </Page>

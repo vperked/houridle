@@ -75,7 +75,7 @@ interface PageProps {
 
 export function Page({ title, back, onBack, action, children, wide }: PageProps) {
   return (
-    <div className={`animate-fade mx-auto w-full ${wide ? "" : "lg:max-w-2xl"}`}>
+    <div className={`animate-fade mx-auto w-full ${wide ? "lg:max-w-2xl xl:max-w-none" : "lg:max-w-2xl"}`}>
       {back && (
         <button type="button" onClick={onBack} className="-ml-1 mb-1 inline-flex h-8 items-center gap-0.5 pr-2 text-[15px] text-accent">
           <Icon name="back" className="size-5" strokeWidth={2.2} />
@@ -180,6 +180,81 @@ export function Row({ icon, lead, title, detail, trailing, onClick, chevron = !!
 export function Fill({ pct, className = "duration-500" }: { pct: number; className?: string }) {
   const p = Math.min(100, Math.max(0, pct));
   return <span className={`block h-full w-full rounded-full bg-accent transition-transform ease-out motion-reduce:transition-none ${className}`} style={{ transform: `translateX(${p - 100}%)` }} />;
+}
+
+// pageSlots is which page buttons to show: the first, the last, and the
+// ones around the current page, with gaps (null) between. Always 7 or fewer,
+// so the bar doesn't change width as you go.
+function pageSlots(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i);
+  const lo = Math.max(1, Math.min(page - 1, pages - 5));
+  const hi = Math.min(pages - 2, Math.max(page + 1, 4));
+  const out: (number | null)[] = [0];
+  if (lo > 1) out.push(null);
+  for (let i = lo; i <= hi; i++) out.push(i);
+  if (hi < pages - 2) out.push(null);
+  out.push(pages - 1);
+  return out;
+}
+
+interface PagerProps {
+  page: number;
+  pages: number;
+  from: number;
+  total: number;
+  size: number;
+  setPage: (page: number) => void;
+}
+
+// Pager is the bar under a paged list: which items are showing, and the
+// pages. It's nothing when everything fits on one page. Takes usePages'
+// result as is: <Pager {...p} />.
+export function Pager({ page, pages, from, total, size, setPage }: PagerProps) {
+  if (pages <= 1) return null;
+  const step = "grid size-8 place-items-center rounded-lg text-[13px] transition-colors active:bg-fill disabled:pointer-events-none disabled:opacity-30";
+  return (
+    <nav aria-label="Pages" className="flex items-center justify-between gap-2 border-t border-line px-2 py-1.5">
+      <span className="sub num hidden pl-2 text-[13px] whitespace-nowrap sm:inline">
+        {from + 1}–{Math.min(from + size, total)} of {total}
+      </span>
+      <span className="flex flex-1 items-center justify-center gap-0.5 sm:flex-none">
+        <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0} aria-label="Previous page" className={`${step} text-accent`}>
+          <Icon name="back" className="size-4" strokeWidth={2.2} />
+        </button>
+        {pageSlots(page, pages).map((p, i) =>
+          p === null ? (
+            <span key={`gap${i}`} className="faint grid size-8 place-items-center text-[13px]" aria-hidden="true">
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPage(p)}
+              aria-label={`Page ${p + 1}`}
+              aria-current={p === page ? "page" : undefined}
+              className={`${step} num ${p === page ? "bg-accent font-semibold text-white active:bg-accent" : "hover:bg-fill"}`}
+            >
+              {p + 1}
+            </button>
+          ),
+        )}
+        <button type="button" onClick={() => setPage(page + 1)} disabled={page === pages - 1} aria-label="Next page" className={`${step} text-accent`}>
+          <Icon name="chevron" className="size-4" strokeWidth={2.2} />
+        </button>
+      </span>
+    </nav>
+  );
+}
+
+// Loading stands in while a screen's code arrives. It shows only if that
+// takes a moment (it fades in late), so a quick load doesn't flash it.
+export function Loading() {
+  return (
+    <div className="loading-late grid place-items-center py-16" role="status" aria-label="Loading">
+      <Icon name="refresh" className="faint size-5 animate-spin" strokeWidth={2} />
+    </div>
+  );
 }
 
 export function Stat({ value, label }: { value: ReactNode; label: ReactNode }) {

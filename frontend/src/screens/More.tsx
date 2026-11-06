@@ -1,18 +1,9 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import type { ComponentType } from "react";
-import { Confirm, Group, Page, Row } from "../components/ui.tsx";
+import { Confirm, Group, Loading, Page, Row } from "../components/ui.tsx";
 import { api } from "../lib/api.ts";
 import { useAction } from "../components/toast.tsx";
 import { notifyLabel, pageAddress } from "../lib/format.ts";
-import Deals from "./Deals.tsx";
-import Inventory from "./Inventory.tsx";
-import Shop from "./Shop.tsx";
-import Accounts from "./more/Accounts.tsx";
-import Alerts from "./more/Alerts.tsx";
-import Badges from "./more/Badges.tsx";
-import Free from "./more/Free.tsx";
-import PageLink from "./more/PageLink.tsx";
-import Updates from "./more/Updates.tsx";
 import type { IconName, Tint } from "../components/ui.tsx";
 import type { Panel } from "../lib/types.ts";
 
@@ -32,6 +23,30 @@ interface Section {
   group: string;
   summary: (p: Panel) => string;
 }
+
+// Each screen is its own file, fetched when it's first opened (or once the
+// page is idle: see preloadScreens), so the page starts with less to load.
+const SCREENS = {
+  free: () => import("./more/Free.tsx"),
+  deals: () => import("./Deals.tsx"),
+  badges: () => import("./more/Badges.tsx"),
+  inventory: () => import("./Inventory.tsx"),
+  shop: () => import("./Shop.tsx"),
+  accounts: () => import("./more/Accounts.tsx"),
+  alerts: () => import("./more/Alerts.tsx"),
+  updates: () => import("./more/Updates.tsx"),
+  page: () => import("./more/PageLink.tsx"),
+};
+export const preloadMore = () => Object.values(SCREENS).forEach((load) => void load());
+const Free = lazy(SCREENS.free);
+const Deals = lazy(SCREENS.deals);
+const Badges = lazy(SCREENS.badges);
+const Inventory = lazy(SCREENS.inventory);
+const Shop = lazy(SCREENS.shop);
+const Accounts = lazy(SCREENS.accounts);
+const Alerts = lazy(SCREENS.alerts);
+const Updates = lazy(SCREENS.updates);
+const PageLink = lazy(SCREENS.page);
 
 // More is everything else houridle's command line does, as a menu: each
 // row opens its own screen (#more/<name>), with a back button.
@@ -65,7 +80,9 @@ export default function More({ panel, refresh, onQuit, sub, goSub }: MoreProps) 
     const Screen = section.Screen;
     return (
       <Page back="More" onBack={() => goSub("")} title={section.title}>
-        <Screen signedIn={signedIn} panel={panel} refresh={refresh} />
+        <Suspense fallback={<Loading />}>
+          <Screen signedIn={signedIn} panel={panel} refresh={refresh} />
+        </Suspense>
       </Page>
     );
   }

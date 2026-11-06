@@ -432,6 +432,7 @@ npm run build
 |---|---|
 | `panel` | The control panel (`houridle serve`), signed in and idling. The default |
 | `status` | A plain status page (`houridle start -web`): games and Stop, nothing else |
+| `big` | A library of 650 games, all idling: the long lists and their pages |
 | `empty` | Signed in, nothing idling, nothing in the library or inventory |
 | `offline` | houridle can't be reached |
 | `unauthorized` | The page's key is wrong |

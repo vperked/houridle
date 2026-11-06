@@ -1,18 +1,23 @@
-import { useState } from "react";
-import { Empty } from "./ui.tsx";
+import { memo, useMemo, useState } from "react";
+import { Empty, Pager } from "./ui.tsx";
+import { usePages } from "../hooks/usePages.ts";
 import { timeOfDay } from "../lib/format.ts";
 import { LEVEL_DOT } from "../lib/states.ts";
 import type { StatusEvent } from "../lib/types.ts";
 
 const COLLAPSED = 5;
+const PAGE = 20; // events a page, once they're all shown
 
 // Activity is the recent events, newest first, with problems easy to spot.
-export default function Activity({ events }: { events: StatusEvent[] }) {
+// Memoized: events only change when a status poll brings new ones, not on
+// each tick of the clocks around it.
+export default memo(function Activity({ events }: { events: StatusEvent[] }) {
   const [all, setAll] = useState(false);
   const [problemsOnly, setProblemsOnly] = useState(false);
-  const list = [...events].reverse().filter((e) => !problemsOnly || e.level === "warn" || e.level === "bad");
-  const problems = events.filter((e) => e.level === "warn" || e.level === "bad").length;
-  const shown = all ? list : list.slice(0, COLLAPSED);
+  const list = useMemo(() => [...events].reverse().filter((e) => !problemsOnly || e.level === "warn" || e.level === "bad"), [events, problemsOnly]);
+  const problems = useMemo(() => events.filter((e) => e.level === "warn" || e.level === "bad").length, [events]);
+  const p = usePages(list, PAGE, String(problemsOnly));
+  const shown = all ? p.items : list.slice(0, COLLAPSED);
 
   return (
     <section>
@@ -29,7 +34,7 @@ export default function Activity({ events }: { events: StatusEvent[] }) {
           <Empty icon="clock">{problemsOnly ? "No problems" : "Nothing yet"}</Empty>
         ) : (
           <>
-            <ol className="rows">
+            <ol ref={p.ref} className="rows">
               {shown.map((e, i) => (
                 <li key={`${e.at}-${i}`} className="flex gap-3 px-4 py-3 text-[14px]">
                   <span className={`mt-[7px] size-1.5 shrink-0 rounded-full ${LEVEL_DOT[e.level] ?? LEVEL_DOT.info}`} />
@@ -40,8 +45,12 @@ export default function Activity({ events }: { events: StatusEvent[] }) {
                 </li>
               ))}
             </ol>
+            {all && <Pager {...p} />}
             {list.length > COLLAPSED && (
-              <button type="button" onClick={() => setAll(!all)} className="row-tap w-full border-t border-line py-3 text-center text-[14px] text-accent">
+              <button type="button" onClick={() => {
+                  setAll(!all);
+                  p.setPage(0);
+                }} className="row-tap w-full border-t border-line py-3 text-center text-[14px] text-accent">
                 {all ? "Show less" : `Show all ${list.length}`}
               </button>
             )}
@@ -50,4 +59,4 @@ export default function Activity({ events }: { events: StatusEvent[] }) {
       </div>
     </section>
   );
-}
+});

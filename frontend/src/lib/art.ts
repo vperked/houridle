@@ -5,7 +5,8 @@ import type { Art } from "./types.ts";
 // a version in them, so houridle looks them up (GET /api/art), all the
 // games on screen in one request, and they're remembered for the visit.
 const known = new Map<number, Art>(); // app ID -> { capsule, header } (empty if the store has none)
-const waiting = new Map<number, ((art: Art) => void)[]>(); // app ID -> callbacks
+const waiting = new Map<number, ((art: Art) => void)[]>(); // app ID -> callbacks, not asked for yet
+const asked = new Map<number, ((art: Art) => void)[]>(); // app ID -> callbacks, asked for and on the way
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 // The old, fixed addresses: used only if the lookup fails.
@@ -17,7 +18,7 @@ const guess = (id: number): Art => ({
 async function flush() {
   timer = null;
   const ids = [...waiting.keys()];
-  const calls = new Map(waiting);
+  for (const [id, cbs] of waiting) asked.set(id, cbs);
   waiting.clear();
   for (let i = 0; i < ids.length; i += 300) {
     const batch = ids.slice(i, i + 300);
@@ -33,12 +34,18 @@ async function flush() {
     for (const id of batch) {
       const art = ok ? (found[id] ?? {}) : guess(id);
       known.set(id, art);
-      for (const cb of calls.get(id) ?? []) cb(art);
+      for (const cb of asked.get(id) ?? []) cb(art);
+      asked.delete(id);
     }
   }
 }
 
 function request(id: number, cb: (art: Art) => void) {
+  const onTheWay = asked.get(id);
+  if (onTheWay) {
+    onTheWay.push(cb); // its answer is coming: wait for that one
+    return;
+  }
   if (!waiting.has(id)) waiting.set(id, []);
   waiting.get(id)!.push(cb);
   if (!timer) timer = setTimeout(flush, 30);
