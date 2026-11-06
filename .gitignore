@@ -1,9 +1,11 @@
-# houridle's .gitignore. The built status page (backend/web/dist) IS
-# committed, so building houridle needs only Go.
+# houridle's .gitignore. The built page (backend/views/web/page/dist) is not
+# committed: make and build.bat build it from frontend/ first.
 
 # ---- Builds ----
+# make and build.bat build into bin/; run houridle from there and its own
+# files (config.json, the log, the Steam API library) stay there too.
+/bin/
 /houridle
-/backend/houridle
 *.exe
 *.exe~
 *.exe.old
@@ -40,6 +42,7 @@ npm-debug.log*
 *.key
 
 # ---- Frontend ----
+/backend/views/web/page/dist/
 frontend/node_modules/
 frontend/.vite/
 *.local

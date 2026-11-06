@@ -42,7 +42,7 @@ arch() {
   case "$(uname -m)" in
     x86_64 | amd64) echo amd64 ;;
     aarch64 | arm64) echo arm64 ;;
-    *) die "No ready-made houridle for $(uname -m); install Go (https://go.dev/dl/) and run this again to build it" ;;
+    *) die "No ready-made houridle for $(uname -m); install Go (https://go.dev/dl/) and Node.js (https://nodejs.org) and run this again to build it" ;;
   esac
 }
 
@@ -59,7 +59,8 @@ build() {
   local version
   version="$(git -C "$here" describe --tags --always 2>/dev/null | sed 's/^v//' || true)"
   say "Building houridle ${version:+$version }with $(go env GOVERSION)"
-  (cd "$here" && go build -trimpath -ldflags "-s -w -X main.version=${version:-dev}" -o "$1" ./backend)
+  (cd "$here/frontend" && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm run build)
+  (cd "$here" && go build -trimpath -ldflags "-s -w -X main.version=${version:-dev}" -o "$1" ./backend/cmd/houridle)
 }
 
 # github_token: optional (the repository is public); it raises GitHub's
@@ -74,12 +75,12 @@ github_token() {
 download() {
   local out="$1" name token api auth=() release id sums_id want got
   name="houridle-linux-$(arch)"
-  command -v curl >/dev/null || die "Downloading needs curl (or install Go to build houridle instead)"
+  command -v curl >/dev/null || die "Downloading needs curl (or install Go and Node.js to build houridle instead)"
   if token="$(github_token)"; then auth=(-H "Authorization: Bearer $token"); fi
   api="https://api.github.com/repos/$repo"
   say "Downloading the latest houridle release ($name)"
   release="$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" "$api/releases/latest")" ||
-    die "Couldn't get the latest release from GitHub (there may not be one yet). Install Go (https://go.dev/dl/) to build houridle here instead."
+    die "Couldn't get the latest release from GitHub (there may not be one yet). Install Go (https://go.dev/dl/) and Node.js (https://nodejs.org) to build houridle here instead."
   asset_id() { printf '%s' "$release" | tr -d '\r\n' | tr ',' '\n' | grep -B3 "\"name\": *\"$1\"" | sed -n 's/.*"id": *\([0-9]*\).*/\1/p' | tail -1; }
   id="$(asset_id "$name")" sums_id="$(asset_id SHA256SUMS)"
   [ -n "$id" ] && [ -n "$sums_id" ] || die "The latest release has no $name or SHA256SUMS"
@@ -93,7 +94,7 @@ download() {
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 binary="$tmp/houridle"
-if [ -f "$here/go.mod" ] && go_ok; then
+if [ -f "$here/go.mod" ] && go_ok && command -v npm >/dev/null; then
   build "$binary"
 else
   download "$binary"

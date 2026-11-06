@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/handover"
-	"houridle/backend/stoptime"
+	"houridle/backend/run/handover"
+	"houridle/backend/run/stoptime"
 )
 
 // The handover command line must survive Go's flag parsing, which stops at

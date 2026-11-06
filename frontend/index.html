@@ -16,7 +16,22 @@
     <title>houridle</title>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <div id="root">
+      <!-- The loading screen until the page's script takes over (same markup as components/Splash.tsx). -->
+      <div class="splash" role="status" aria-live="polite" aria-busy="true">
+        <div class="splash-inner">
+          <span class="splash-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9" />
+              <line class="splash-hour" x1="12" y1="12" x2="12" y2="8.5" />
+              <line class="splash-minute" x1="12" y1="12" x2="12" y2="6" />
+            </svg>
+          </span>
+          <span class="splash-name">houridle</span>
+          <span class="splash-note">Loading…</span>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,4 +1,5 @@
-# Runs the tests and checks both platforms build, on every push and pull request.
+# Builds the page, runs the tests and checks both platforms build, on every
+# push and pull request.
 name: ci
 
 on:
@@ -16,6 +17,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the page (type-checks it first)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - name: Formatting
         run: test -z "$(gofmt -l backend)" || { gofmt -l backend; exit 1; }
       - name: Vet (Linux and Windows)
@@ -26,28 +37,5 @@ jobs:
         run: go test -race ./...
       - name: Build (Linux and Windows)
         run: |
-          go build -o /dev/null ./backend
-          GOOS=windows go build -o /dev/null ./backend
-
-  # The status page's built files are committed (so building houridle needs
-  # only Go); this checks they match the frontend's source.
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Build the status page
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-      - name: Check the committed build is up to date
-        run: |
-          if ! git diff --exit-code --stat -- backend/web/dist; then
-            echo "The built status page is out of date. Run: cd frontend && npm run build, then commit backend/web/dist"
-            exit 1
-          fi
+          go build -o /dev/null ./backend/cmd/houridle
+          GOOS=windows go build -o /dev/null ./backend/cmd/houridle

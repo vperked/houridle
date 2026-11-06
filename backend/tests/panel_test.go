@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"houridle/backend/steamver"
-	"houridle/backend/update"
+	"houridle/backend/features/update"
+	"houridle/backend/online/steamver"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,21 +13,20 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/config"
-	"houridle/backend/freegames"
-	"houridle/backend/handover"
-	"houridle/backend/panel"
-	"houridle/backend/steamauth"
-	"houridle/backend/web"
+	"houridle/backend/features/freegames"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/run/config"
+	"houridle/backend/run/handover"
+	"houridle/backend/views/panel"
+	"houridle/backend/views/web"
 )
 
 // newPanel starts a controller for alice (signed in) against a fake Steam,
 // with its own config folder and app folder.
 func newPanel(t *testing.T) (*panel.Controller, *fakeCM, string) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateUserDirsFor(t)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // its own idle lock
-	t.Setenv("HOME", t.TempDir())
 	accts, err := steamauth.DefaultAccounts()
 	if err != nil {
 		t.Fatal(err)

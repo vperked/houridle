@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/config"
+	"houridle/backend/run/config"
 )
 
 func TestParseAppIDs(t *testing.T) {
@@ -63,7 +63,7 @@ func TestAppDirFallsBackWhenExeFolderIsntWritable(t *testing.T) {
 		t.Fatalf("a writable exe folder should be used, got %q", got)
 	}
 
-	missing := filepath.Join(t.TempDir(), "no-such-folder") // can't create files in it
+	missing := filepath.Join(t.TempDir(), "no-such-folder")
 	fallback := filepath.Join(t.TempDir(), "houridle")
 	if got := config.AppDirFor(filepath.Join(missing, "houridle.exe"), fallback); got != fallback {
 		t.Fatalf("an unwritable exe folder should fall back to %q, got %q", fallback, got)
@@ -86,7 +86,6 @@ func TestAppDirDetectsGoRunOnlyInItsTempFolder(t *testing.T) {
 		t.Fatalf("under go run the working directory should be used, got %q", got)
 	}
 
-	// An install folder that merely has "go-build" in its path is used as is.
 	installed := filepath.Join(t.TempDir(), "go-builds", "houridle")
 	if err := os.MkdirAll(installed, 0o755); err != nil {
 		t.Fatal(err)

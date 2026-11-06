@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"houridle/backend/web"
+	"houridle/backend/views/web"
 )
 
 func TestAppManifestNeedsTheKey(t *testing.T) {

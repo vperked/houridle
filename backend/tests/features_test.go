@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/cards"
-	"houridle/backend/config"
-	"houridle/backend/idler"
-	"houridle/backend/notify"
-	"houridle/backend/steam"
-	"houridle/backend/steamauth"
-	"houridle/backend/steamcm"
+	"houridle/backend/client/steam"
+	"houridle/backend/features/cards"
+	"houridle/backend/features/notify"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/run/config"
+	"houridle/backend/run/idler"
 )
 
 // ---------- status while idling ----------

@@ -25,13 +25,13 @@ That builds houridle (or downloads the latest release if Go isn't installed), in
 
 ## Building it yourself
 
-All it takes is [Go](https://go.dev/dl/) 1.26 or newer: the control panel's page is already built and included.
+You need [Go](https://go.dev/dl/) 1.26 or newer and [Node.js](https://nodejs.org) 22 or newer: the control panel's page is TypeScript, built first and compiled into houridle.
 
 ```bash
 make
 ```
 
-Or `go build -o houridle ./backend`, or double-click `build.bat` on Windows. Builds for other systems work from anywhere, with no C compiler: `GOOS=windows go build -o houridle.exe ./backend`. `make test` runs the tests, `make all-os` builds every release file, and `make page` rebuilds the page after changing `frontend/` (that one needs Node).
+That builds the page, then houridle, into `bin/` (not in git): run houridle from there, and the files it keeps next to itself (`config.json`, `houridle.log`, the Steam API library) stay there too. On Windows, double-click `build.bat`, which builds `bin/houridle.exe` and `bin/houridle` for Linux. Once the page is built (`make page`), plain Go builds include it, for any system and with no C compiler: `GOOS=windows go build -o bin/houridle.exe ./backend/cmd/houridle`. A houridle built without the page still works; its control panel just says the page wasn't built. `make test` runs the tests and `make all-os` builds every release file.
 
 Ready-made builds are attached to each [release](https://github.com/vperked/houridle/releases): `houridle.exe`, `houridle-linux-amd64` and `houridle-linux-arm64` (rename it `houridle`), with a `SHA256SUMS` file to check them against.
 
@@ -97,6 +97,7 @@ You sign in once. houridle keeps a Steam *refresh token*, never your password, a
 | `houridle start -claim` | Also add Steam's free giveaways to your account, checking every 12 hours (see [Free games](#free-games)) |
 | `houridle start -craft` | Also craft game badges whenever a full card set is there (see [Badges and Steam XP](#badges-and-steam-xp)) |
 | `houridle start -events` | During Steam's sales, also explore the discovery queue and claim the daily sticker |
+| `houridle start -refundable` | Also idle games you could still refund; they're held back otherwise (see below) |
 | `houridle start -rotate 2h` | With more than 32 games: how often they take turns (default every hour) |
 | `houridle start -status away` | How you show to friends while idling: `online` (the default), `away`, `busy`, `invisible` or `offline` |
 | `houridle start -achievements` | Unlock or lock achievements, no Steam client needed |
@@ -109,6 +110,7 @@ You sign in once. houridle keeps a Steam *refresh token*, never your password, a
 - **Everything you own.** `-all` reads your library from Steam (every 10 minutes, so new purchases join) and idles all of it, taking turns past 32. With `-until`, games already past the target are left out.
 - **More than 32 games.** Steam counts at most 32 at a time. Pick more and they take turns, the ones that have idled least going first.
 - **What friends see.** houridle shows you as Online and in-game, like the Steam client does when you play. With `offline` or `invisible`, Steam still records the hours, but nobody sees you in a game. Set `"status": "away"` (or any of them) in `config.json` to make it the default.
+- **Refunds.** Steam refunds a game bought in the last 14 days with under 2 hours played, and idling counts as playing. So `start` holds back any game you could still refund: it shows as *Refundable* with the days left and its playtime, you get an alert (and another when only 2 days are left), and it joins in by itself once the 14 days are over or you've played 2 hours. Purchases are read from your account's licenses; keys bought elsewhere, free games and family-shared games aren't held. `-refundable` idles them anyway (in the control panel: **While idling → Idle refundable games**). This needs the sign-in, so idling through the Steam client doesn't hold games back.
 - **Playing elsewhere.** Steam lets one device play at a time. If you start a game on another device, `start` pauses and resumes when you stop; it never kicks you out of your own game.
 - **One connection per sign-in.** A second houridle using the same sign-in takes over the first, which reconnects a minute later. So `-list`, `-setup` (when it loads your games) and `-achievements` refuse while houridle is idling, and `status` doesn't connect then.
 
@@ -285,12 +287,13 @@ You sign in to Steam once by viewing that virtual screen from your own computer.
 **On your computer**, build houridle for Linux and copy it and the kit to the server:
 
 ```bash
-GOOS=linux go build -o houridle ./backend
+make page
+GOOS=linux go build -o bin/houridle ./backend/cmd/houridle
 ```
 
 ```bash
 ssh you@your-server mkdir -p houridle-setup
-scp -r houridle deploy/linux you@your-server:houridle-setup/
+scp -r bin/houridle deploy/linux you@your-server:houridle-setup/
 ```
 
 **On the server**, over SSH:
@@ -356,42 +359,55 @@ The repository has two parts:
 | Folder | What's in it |
 |---|---|
 | `backend/` | houridle itself, in Go: everything it does, and the server for the status page |
-| `frontend/` | The status page, in React and Tailwind |
+| `frontend/` | The status page, in React, TypeScript and Tailwind |
 | `deploy/linux/` | Linux server setup: installers (with a saved sign-in, or with the Steam client), Steam sign-in helper, services |
 
 ### Backend
 
+The Go code is in `backend/`, one folder per package, grouped by what they do:
+
 | Folder | What's in it |
 |---|---|
-| `backend/` | Starting point: reads the command and runs it |
-| `config/` | Saves and loads `config.json`: game lists and defaults |
-| `steam/` | Finds Steam and reads your games (Windows and Linux) |
-| `steamworks/` | Talks to Steam through Valve's API library |
-| `steamauth/` | Signing in to Steam (QR, password, Steam Guard), the saved sign-ins (one per account) and keeping them fresh |
-| `steamcm/` | Connects to Steam's servers with a saved sign-in: reports games as played, sets your status, reads playtime and achievements |
-| `cards/` | Reads your badge pages for games with card drops left |
-| `freegames/` | Finds Steam's giveaways and adds them to your account |
-| `notify/` | Sends alerts to a webhook |
-| `market/` | Reads the Steam Market (wallet, card prices, listings) and buys a listing when you confirm |
-| `web/` | Serves the page and its API; `web/dist/` is the built frontend |
-| `panel/` | `houridle serve`: runs idling for the control panel |
-| `history/` | Adds up the hours idled, in `history.json` |
-| `idler/` | Runs an idling session: a helper process per game through the Steam client, or one connection with a saved sign-in |
-| `childproc/` | Starts those helpers hidden, on each OS |
-| `achievements/` | Reads and changes achievements through the Steam client |
-| `stoptime/` | Reads "3h", "90m" or "23:30" for the automatic stop |
-| `eventlog/` | Writes `houridle.log` |
-| `handover/` | Switches between window and tray; stops two copies idling at once |
-| `autostart/` | Starts houridle when you sign in (Windows) |
-| `tray/` | The tray icon and its menu (Windows) |
-| `ui/` | Everything you see in the console |
-| `tests/` | All the tests |
+| `cmd/houridle/` | The program: reads the command and runs it (`go build ./backend/cmd/houridle`) |
+| **`client/`** | **The Steam client on this computer** |
+| `client/steam/` | Finds Steam and reads your games (Windows and Linux) |
+| `client/steamworks/` | Talks to Steam through Valve's API library |
+| `client/achievements/` | Reads and changes achievements through the Steam client |
+| `client/childproc/` | Starts the helper processes hidden, on each OS |
+| **`online/`** | **Steam's servers and websites, with a saved sign-in** |
+| `online/steamauth/` | Signing in to Steam (QR, password, Steam Guard), the saved sign-ins (one per account) and keeping them fresh |
+| `online/steamcm/` | Connects to Steam's servers: reports games as played, sets your status, reads playtime, licenses and achievements |
+| `online/steamweb/` | What talking to Steam's websites shares: a signed-in HTTP client and short errors |
+| `online/steamver/` | Keeps the values Steam's sign-in expects up to date, from `steam.json` |
+| **`features/`** | **What houridle does besides idling** |
+| `features/cards/` | Reads your badge pages for card drops left, and crafts badges |
+| `features/freegames/` | Finds Steam's giveaways and adds them to your account |
+| `features/gamestore/` | Store prices and deals; buys a game with your wallet when you confirm |
+| `features/inventory/` | Your inventory: cards, gems and booster packs |
+| `features/market/` | Reads the Steam Market (wallet, card prices, listings) and buys a listing when you confirm |
+| `features/refund/` | Steam's refund window: which recent purchases could still be refunded, and which games they hold |
+| `features/history/` | Adds up the hours idled, in `history.json` |
+| `features/notify/` | Sends alerts to a webhook |
+| `features/update/` | Checks GitHub for new releases and updates houridle |
+| **`run/`** | **Running an idling session** |
+| `run/idler/` | Runs an idling session: a helper process per game through the Steam client, or one connection with a saved sign-in |
+| `run/stoptime/` | Reads "3h", "90m" or "23:30" for the automatic stop |
+| `run/handover/` | Switches between window and tray; stops two copies idling at once |
+| `run/config/` | Saves and loads `config.json`: game lists and defaults |
+| `run/eventlog/` | Writes `houridle.log` |
+| `run/autostart/` | Starts houridle when you sign in (Windows) |
+| **`views/`** | **What you see** |
+| `views/ui/` | Everything in the console |
+| `views/tray/` | The tray icon and its menu (Windows) |
+| `views/web/` | Serves the page and its API; `web/page/dist/` is the built frontend (not in git) |
+| `views/panel/` | `houridle serve`: runs idling for the control panel |
+| `tests/` | The tests |
 
 Files ending in `Windows.go` or `Linux.go` hold the parts that differ per OS; everything else is shared. Run the tests with `go test ./...`.
 
 ### Frontend
 
-The status page is a small React app styled with Tailwind, built with Vite. Its built files go into `backend/web/dist/`, which is committed and built into houridle, so building houridle needs only Go. After changing the page, rebuild it (you need [Node.js](https://nodejs.org) 22 or newer) and commit `backend/web/dist/` with your change:
+The status page is a small React app in TypeScript, styled with Tailwind, built with Vite. It builds into `backend/views/web/page/dist/`, which is compiled into houridle and isn't in git (`make` and `build.bat` build it first). To build just the page (you need [Node.js](https://nodejs.org) 22 or newer):
 
 ```bash
 cd frontend
@@ -399,7 +415,28 @@ npm ci
 npm run build
 ```
 
-`HOURIDLE_KEY=<key> npm run dev` serves the page with live reload, getting its data from a houridle running its status page on port 8095 (or wherever `HOURIDLE_URL` points); the key is the part after `?key=` in that houridle's link.
+`npm run build` type-checks the code first (`npm run typecheck` does just that, with no build).
+
+| Folder | What's in it |
+|---|---|
+| `src/` | `main.tsx` starts the page, `App.tsx` is its frame and tabs, `index.css` its looks |
+| `src/screens/` | One file per tab (Idle, Achievements, More), and the More menu's screens (`screens/more/`) |
+| `src/components/` | The pieces screens are built from (`ui.tsx`), the Now and History blocks, and notifications (`toast.tsx`) |
+| `src/hooks/` | Reading houridle's status, your library and card drops |
+| `src/lib/` | The API (`api.ts`) and the shape of its answers (`types.ts`, matching `backend/views/web`), formatting, money, game pictures |
+| `mock/` | The test data `npm run dev` answers with, shaped by `src/lib/types.ts` |
+
+`npm run dev` serves the page with live reload and test data, so no houridle is needed (open the `http://127.0.0.1:…` address it prints; it moves to the next port if one is taken): a pretend one (in `frontend/mock/`, used only by the dev server, never built into the page) with two accounts, a few games idling, history, badges, a shop and so on. Clicking around works: starting and stopping, switching accounts, saving achievements and settings, buying all change its state until the dev server restarts. Answers take about 300 ms, like over a network. Other situations, by adding `?mock=<scenario>` to the page's address or starting with `MOCK=<scenario> npm run dev`:
+
+| Scenario | What the page sees |
+|---|---|
+| `panel` | The control panel (`houridle serve`), signed in and idling. The default |
+| `status` | A plain status page (`houridle start -web`): games and Stop, nothing else |
+| `empty` | Signed in, nothing idling, nothing in the library or inventory |
+| `offline` | houridle can't be reached |
+| `unauthorized` | The page's key is wrong |
+
+To work against a real houridle instead, point `HOURIDLE_URL` at one running its status page and give its key: `HOURIDLE_URL=http://127.0.0.1:8095 HOURIDLE_KEY=<key> npm run dev` (the key is the part after `?key=` in that houridle's link). The dev server says which it's using when it starts.
 
 ### Builds and releases
 

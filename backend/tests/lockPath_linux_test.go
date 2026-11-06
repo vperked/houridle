@@ -8,12 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/handover"
+	"houridle/backend/run/handover"
 )
 
-// Every copy must agree on the lock file whatever its environment, or two
-// could idle at once; and it must never be in /tmp, where another user could
-// create it first.
 func TestLockPathIgnoresEnvironment(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	first, err := handover.LockPath("")

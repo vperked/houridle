@@ -14,10 +14,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"houridle/backend/idler"
-	"houridle/backend/steam"
-	"houridle/backend/steamauth"
-	"houridle/backend/steamcm"
+	"houridle/backend/client/steam"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/run/idler"
 )
 
 // ---------- fuzzing: nothing Steam (or anyone) sends may panic ----------

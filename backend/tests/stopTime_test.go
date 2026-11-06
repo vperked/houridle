@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/stoptime"
+	"houridle/backend/run/stoptime"
 )
 
 func TestStopTimeParse(t *testing.T) {
@@ -93,7 +93,6 @@ func TestStopContextCancelledIsNotTheStopTime(t *testing.T) {
 	}
 }
 
-// A stop time already past (e.g. handed over just after it) ends at once.
 func TestStopContextPastTimeEndsAtOnce(t *testing.T) {
 	ctx, cancel := stoptime.WithStop(context.Background(), time.Now().Add(-time.Minute))
 	defer cancel()

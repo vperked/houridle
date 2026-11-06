@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/panel"
-	"houridle/backend/steamcm"
-	"houridle/backend/steamver"
-	"houridle/backend/update"
+	"houridle/backend/features/update"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/online/steamver"
+	"houridle/backend/views/panel"
 )
 
 // fakeGitHub serves one release with a build for this computer.

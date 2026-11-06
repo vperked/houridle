@@ -1,0 +1,1 @@
+The control panel page is built into `dist/` here from `frontend/` (`make page`, or `cd frontend && npm ci && npm run build`), and houridle embeds it when it's compiled. `dist/` is not in git: `make` and `build.bat` build the page first. A houridle compiled without it still runs; its page just says it wasn't built.

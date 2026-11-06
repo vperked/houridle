@@ -18,6 +18,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the page (type-checks it first)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - name: Test
         run: go test ./...
       - name: Build
@@ -25,9 +35,9 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           flags="-s -w -X main.version=$version"
           mkdir dist
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle.exe ./backend
-          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-amd64 ./backend
-          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-arm64 ./backend
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle.exe ./backend/cmd/houridle
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-amd64 ./backend/cmd/houridle
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$flags" -o dist/houridle-linux-arm64 ./backend/cmd/houridle
           (cd dist && sha256sum * > SHA256SUMS)
       - name: Publish
         env:

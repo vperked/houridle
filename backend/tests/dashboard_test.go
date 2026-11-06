@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/idler"
-	"houridle/backend/steam"
-	"houridle/backend/ui"
+	"houridle/backend/client/steam"
+	"houridle/backend/run/idler"
+	"houridle/backend/views/ui"
 )
 
 // fakeGames stands in for the idle supervisor.
@@ -99,7 +99,6 @@ func TestDashboardLayoutFitsWideNames(t *testing.T) {
 
 func TestDashboardKeysIgnoreEscapeSequences(t *testing.T) {
 	d := ui.NewDashboard(time.Now(), "1.0.0", true)
-	// F2 is ESC O Q, F4 is ESC O S, ctrl+T-ish sequences end in letters too.
 	d.Press("\x1bOQ\x1b[1;5Q\x1b[A\x1bOT")
 	select {
 	case a := <-d.Actions():

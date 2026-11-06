@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/idler"
-	"houridle/backend/steam"
-	"houridle/backend/steamauth"
-	"houridle/backend/steamcm"
+	"houridle/backend/client/steam"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/run/idler"
 )
 
 func connectAlice(t *testing.T, cm *fakeCM) (*steamcm.Session, error) {

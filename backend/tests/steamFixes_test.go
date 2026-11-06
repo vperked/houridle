@@ -15,15 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/steamauth"
-	"houridle/backend/steamcm"
-	"houridle/backend/ui"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/views/ui"
 )
 
-// ---------- a server's own trouble moves on to the next server ----------
-
 func TestTryAnotherServerIsHonoured(t *testing.T) {
-	for _, code := range []int{48, 20, 10} { // TryAnotherCM, ServiceUnavailable, Busy
+	for _, code := range []int{48, 20, 10} {
 		cm := newFakeCM(t, alice, 1)
 		cm.logonResults = []int{code}
 		s, err := connectAlice(t, cm)
@@ -68,8 +66,6 @@ func TestEveryServerHangingUpIsANetworkError(t *testing.T) {
 	}
 }
 
-// ---------- a refusal followed by a hang-up is still a refusal ----------
-
 func TestRefusalThenHangUpIsStillARefusal(t *testing.T) {
 	cm := newFakeCM(t, alice, steamauth.EResultAccessDenied)
 	cm.closeAfterLogon = true
@@ -82,14 +78,10 @@ func TestRefusalThenHangUpIsStillARefusal(t *testing.T) {
 	}
 }
 
-// ---------- playing elsewhere, reported with the sign-in itself ----------
-
 func playingState(blocked bool) []byte {
 	return frame(9600, alice, 4242, new(steamauth.Encoder).Bool(2, blocked).Varint(3, 440).Out())
 }
 
-// Run with -race: the messages after the sign-in answer used to race the
-// session ID being set.
 func TestPlayingStateWithTheSignInIsOrdered(t *testing.T) {
 	cm := newFakeCM(t, alice, 1)
 	cm.afterLogon = [][]byte{playingState(true), playingState(false)}
@@ -133,8 +125,6 @@ func TestPlayingStateWithTheSignInIsOrdered(t *testing.T) {
 	}
 }
 
-// ---------- a connection that silently died is noticed ----------
-
 func shortPings(t *testing.T) {
 	oldEvery, oldTimeout := steamcm.PingEvery, steamcm.PingTimeout
 	steamcm.PingEvery, steamcm.PingTimeout = 50*time.Millisecond, 300*time.Millisecond
@@ -168,17 +158,13 @@ func TestAnAnsweringServerKeepsTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	time.Sleep(time.Second) // about 20 pings
+	time.Sleep(time.Second)
 	if err := s.Err(); err != nil {
 		t.Fatalf("a healthy connection was dropped: %v", err)
 	}
 }
 
-// ---------- nested batches share one decompression budget ----------
-
 func TestNestedBatchesCantMultiplyMemory(t *testing.T) {
-	// Each inner batch unzips to 10 MiB: fine alone, but two in one frame
-	// go over the 16 MiB a frame may cost.
 	var inner bytes.Buffer
 	big := frame(703, 0, 0, make([]byte, 10<<20))
 	var n [4]byte
@@ -210,8 +196,6 @@ func TestNestedBatchesCantMultiplyMemory(t *testing.T) {
 	}
 }
 
-// ---------- Steam's poll interval is kept sensible ----------
-
 func TestPollIntervalIsBounded(t *testing.T) {
 	cases := map[float32]time.Duration{
 		1e30:                 30 * time.Second,
@@ -235,8 +219,6 @@ func TestPollIntervalIsBounded(t *testing.T) {
 	}
 }
 
-// ---------- Adopt explains what was wrong ----------
-
 func TestAdoptSaysWhyItRefused(t *testing.T) {
 	mgr := managerWith(t, nil, aliceSession())
 	sess := aliceSession()
@@ -252,13 +234,9 @@ func TestAdoptSaysWhyItRefused(t *testing.T) {
 	}
 }
 
-// ---------- a renewal that can't be saved is still used ----------
-
-// blockSaves makes saving the session fail while loading it still works.
 func blockSaves(t *testing.T, store *steamauth.Store) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		// An open handle without delete sharing stops the file being replaced.
 		f, err := os.Open(store.Path)
 		if err != nil {
 			t.Fatal(err)
@@ -301,7 +279,7 @@ func TestARenewalThatCantBeSavedIsUsedForTheNextConnection(t *testing.T) {
 	}
 
 	cm.mu.Lock()
-	cm.conn.CloseNow() // the network drops; houridle reconnects
+	cm.conn.CloseNow()
 	cm.mu.Unlock()
 	select {
 	case <-cm.gotGames:
@@ -316,8 +294,6 @@ func TestARenewalThatCantBeSavedIsUsedForTheNextConnection(t *testing.T) {
 		t.Error("the reconnect went back to the token Steam had replaced")
 	}
 }
-
-// ---------- prompts give up when cancelled ----------
 
 func TestPromptsStopWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

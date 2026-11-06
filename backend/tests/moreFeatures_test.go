@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/config"
-	"houridle/backend/freegames"
-	"houridle/backend/history"
-	"houridle/backend/idler"
-	"houridle/backend/steam"
-	"houridle/backend/steamcm"
-	"houridle/backend/web"
+	"houridle/backend/client/steam"
+	"houridle/backend/features/freegames"
+	"houridle/backend/features/history"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/run/config"
+	"houridle/backend/run/idler"
+	"houridle/backend/views/web"
 )
 
 // ---------- hours history ----------

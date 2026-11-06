@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/steam"
-	"houridle/backend/steamworks"
-	"houridle/backend/ui"
+	"houridle/backend/client/steam"
+	"houridle/backend/client/steamworks"
+	"houridle/backend/views/ui"
 )
 
 // Key presses, as the console sends them.
@@ -55,7 +55,7 @@ func checkFrame(t *testing.T, frame string, width, height int) {
 		t.Errorf("%dx%d: frame has %d lines, console fits %d", width, height, len(lines), height-1)
 	}
 	for _, line := range lines {
-		if n := ui.CellWidth(line); n > width { // in cells: CJK characters take two
+		if n := ui.CellWidth(line); n > width {
 			t.Errorf("%dx%d: line is %d wide: %q", width, height, n, line)
 		}
 	}

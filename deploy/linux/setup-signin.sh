@@ -22,14 +22,14 @@ find_binary() {
     echo "$given"
     return
   fi
-  for candidate in "$here/../../houridle" "./houridle" "$install_dir/houridle"; do
+  for candidate in "$here/../../bin/houridle" "$here/../../houridle" "./bin/houridle" "./houridle" "$install_dir/houridle"; do
     if [ -f "$candidate" ]; then
       echo "$candidate"
       return
     fi
   done
   die "Couldn't find the houridle program. Build it with
-    GOOS=linux go build -o houridle ./backend
+    make   (needs Go and Node.js; on Windows, build.bat makes bin/houridle too)
 then run: $0 path/to/houridle"
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sets houridle up on a Linux server (Ubuntu or Debian):
-#   - installs Steam, a virtual display (Xvfb, with xauth) and a VNC server (x11vnc)
+#   - installs Steam, a virtual display (Xvfb) and a VNC server (x11vnc)
 #   - copies houridle to ~/houridle
 #   - adds services for the display, Steam and houridle that start at boot
 #
@@ -11,7 +11,6 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 install_dir="$HOME/houridle"
 unit_dir="$HOME/.config/systemd/user"
-# Set when a re-run updates houridle or a service file, so it's restarted.
 binary_changed=0
 units_changed=0
 
@@ -25,14 +24,14 @@ find_binary() {
     echo "$given"
     return
   fi
-  for candidate in "$here/../../houridle" "./houridle"; do
+  for candidate in "$here/../../bin/houridle" "$here/../../houridle" "./bin/houridle" "./houridle"; do
     if [ -f "$candidate" ]; then
       echo "$candidate"
       return
     fi
   done
   die "Couldn't find the houridle program. Build it with
-    GOOS=linux go build -o houridle ./backend
+    make   (needs Go and Node.js; on Windows, build.bat makes bin/houridle too)
 then run: $0 path/to/houridle"
 }
 
@@ -76,14 +75,12 @@ install_houridle() {
   say "Installing houridle to $install_dir"
   mkdir -p "$install_dir"
   if [ -e "$install_dir/houridle" ] && cmp -s "$1" "$install_dir/houridle"; then
-    return # already this version (or the very same file)
+    return
   fi
   [ ! -e "$install_dir/houridle" ] || binary_changed=1
   install -m 755 "$1" "$install_dir/houridle"
 }
 
-# install_unit copies a service file (from stdin) into place, noting whether
-# an existing one changed.
 install_unit() {
   local dest="$unit_dir/$1" tmp
   tmp="$(mktemp)"
@@ -112,8 +109,6 @@ install_services() {
 
   systemctl --user daemon-reload
   systemctl --user enable --now houridle-display.service houridle-steam.service
-  # On a re-run, restart what's running so updates take effect now, not at
-  # the next reboot. try-restart leaves houridle alone if it isn't running.
   if [ "$units_changed" = 1 ]; then
     say "Restarting the display and Steam with the updated services"
     systemctl --user restart houridle-display.service houridle-steam.service

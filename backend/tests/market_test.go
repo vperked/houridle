@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/cards"
-	"houridle/backend/config"
-	"houridle/backend/market"
-	"houridle/backend/steamauth"
+	"houridle/backend/features/cards"
+	"houridle/backend/features/market"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/run/config"
 )
 
 // fakeMarket stands in for Steam Community: badge and card pages, the

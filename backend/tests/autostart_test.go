@@ -5,7 +5,7 @@ package tests
 import (
 	"testing"
 
-	"houridle/backend/autostart"
+	"houridle/backend/run/autostart"
 )
 
 // Windows runs this command line at sign-in; paths with spaces must be quoted.

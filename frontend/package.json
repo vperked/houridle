@@ -2,11 +2,12 @@
   "name": "houridle-status-page",
   "private": true,
   "version": "1.0.0",
-  "description": "houridle's status page. Builds into ../backend/web/dist, which the Go binary embeds.",
+  "description": "houridle's status page. Builds into ../backend/views/web/page/dist, which the Go binary embeds.",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.2.8",
@@ -15,8 +16,12 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
     "vite": "8.3.4"
   }
 }

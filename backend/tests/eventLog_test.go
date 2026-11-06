@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/eventlog"
+	"houridle/backend/run/eventlog"
 )
 
 func TestEventLogAppendsLines(t *testing.T) {
@@ -57,9 +57,6 @@ func TestEventLogRotates(t *testing.T) {
 	}
 }
 
-// If houridle.log can't be moved aside (here houridle.log.1 is a folder; on
-// Windows another houridle may still have the file open), logging carries on
-// in the same file instead of losing lines or stopping.
 func TestEventLogKeepsWritingWhenRotationFails(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, eventlog.FileName+".1")
@@ -71,7 +68,7 @@ func TestEventLogKeepsWritingWhenRotationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := strings.Repeat("x", 1000)
-	const lines = 1500 // ~1.5 MB, past the 1 MiB limit
+	const lines = 1500
 	for i := range lines {
 		log.Printf("%d %s", i, line)
 	}
@@ -86,7 +83,6 @@ func TestEventLogKeepsWritingWhenRotationFails(t *testing.T) {
 		t.Fatalf("got %d lines in houridle.log, want all %d", len(got), lines)
 	}
 
-	// Once the way is clear, the next rotation goes through.
 	if err := os.RemoveAll(blocker); err != nil {
 		t.Fatal(err)
 	}

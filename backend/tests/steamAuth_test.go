@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/handover"
-	"houridle/backend/steamauth"
-	"houridle/backend/ui"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/run/handover"
+	"houridle/backend/views/ui"
 )
 
 func TestParseToken(t *testing.T) {

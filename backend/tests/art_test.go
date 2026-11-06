@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"houridle/backend/gamestore"
-	"houridle/backend/web"
+	"houridle/backend/features/gamestore"
+	"houridle/backend/views/web"
 )
 
 func TestGameArtIsLookedUpOnce(t *testing.T) {

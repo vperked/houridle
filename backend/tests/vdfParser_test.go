@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/steam"
+	"houridle/backend/client/steam"
 )
 
 func TestParseVDF(t *testing.T) {
@@ -43,8 +43,6 @@ func TestParseVDFRejectsBrokenFiles(t *testing.T) {
 	}
 }
 
-// Nesting is capped, so a damaged or hostile file returns an error instead
-// of recursing until the Go stack limit kills houridle.
 func TestParseVDFCapsNesting(t *testing.T) {
 	nested := func(depth int) string {
 		return strings.Repeat(`"a" { `, depth) + `"k" "v" ` + strings.Repeat("} ", depth)

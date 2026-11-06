@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/cards"
-	"houridle/backend/config"
-	"houridle/backend/inventory"
-	"houridle/backend/panel"
-	"houridle/backend/steamauth"
-	"houridle/backend/web"
+	"houridle/backend/features/cards"
+	"houridle/backend/features/inventory"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/run/config"
+	"houridle/backend/views/panel"
+	"houridle/backend/views/web"
 )
 
 func waitUntil(t *testing.T, what string, ok func() bool) {

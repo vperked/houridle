@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"houridle/backend/steamworks"
-	"houridle/backend/ui"
+	"houridle/backend/client/steamworks"
+	"houridle/backend/views/ui"
 )
 
 func TestAchievementChangesAreTracked(t *testing.T) {

@@ -14,11 +14,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
-	"houridle/backend/steamauth"
-	"houridle/backend/steamcm"
+	"houridle/backend/online/steamauth"
+	"houridle/backend/online/steamcm"
 )
 
 // Two accounts, in Steam's SteamID64 form.
@@ -174,11 +175,11 @@ type fakeCM struct {
 	refuseFirstSet bool
 	refuseFirst    int // refuse this many sign-ins (with logonResult) before accepting
 
-	logonResults    []int    // if set, the answers to the next sign-ins, in order (then logonResult)
-	hangUpFirst     int      // hang up on this many sign-ins without answering
-	afterLogon      [][]byte // frames sent in the same batch as the sign-in answer
-	closeAfterLogon bool     // hang up right after answering a sign-in
-	stallAfterLogon bool     // stop reading (so pings go unanswered) after a sign-in
+	logonResults    []int
+	hangUpFirst     int
+	afterLogon      [][]byte
+	closeAfterLogon bool
+	stallAfterLogon bool
 	quit            chan struct{}
 
 	// Achievements (user stats) for any game asked about.
@@ -188,7 +189,8 @@ type fakeCM struct {
 	revert      []uint32          // stat IDs Steam refuses to store
 
 	licenses     []uint32 // package IDs the account owns (sent after sign-in)
-	stickerReady bool     // a sale-event sticker can be claimed
+	bought       map[uint32]fakePurchase
+	stickerReady bool // a sale-event sticker can be claimed
 
 	family   []fakeGame // games the account's Steam family shares with it (nil: no family)
 	cart     []uint32   // package IDs in the store cart, by line (line ID = index+1)
@@ -201,9 +203,18 @@ func (f *fakeCM) licenseList() []byte {
 	defer f.mu.Unlock()
 	b := new(steamauth.Encoder).Varint(1, 1)
 	for _, id := range f.licenses {
-		b.Message(2, new(steamauth.Encoder).Varint(1, uint64(id)))
+		l := new(steamauth.Encoder).Varint(1, uint64(id))
+		if p, ok := f.bought[id]; ok {
+			l.Fixed32(2, uint32(p.at.Unix())).Varint(6, uint64(p.payment))
+		}
+		b.Message(2, l)
 	}
 	return b.Out()
+}
+
+type fakePurchase struct {
+	at      time.Time
+	payment uint32
 }
 
 // grant adds a package and tells the session, as Steam does after a claim.
@@ -232,7 +243,7 @@ func newFakeCM(t testing.TB, answerAs uint64, logonResult int) *fakeCM {
 	})
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
-	t.Cleanup(func() { close(f.quit) }) // runs first: frees stalled handlers
+	t.Cleanup(func() { close(f.quit) })
 
 	oldDir, oldURL := steamcm.DirectoryURL, steamcm.ServerURL
 	steamcm.DirectoryURL = f.URL + "/dir"

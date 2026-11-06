@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
-	"houridle/backend/cards"
-	"houridle/backend/idler"
-	"houridle/backend/steam"
-	"houridle/backend/steamcm"
+	"houridle/backend/client/steam"
+	"houridle/backend/features/cards"
+	"houridle/backend/online/steamcm"
+	"houridle/backend/run/idler"
 )
 
 const craftPage = `<script>g_steamID = "76561197960266729";</script>

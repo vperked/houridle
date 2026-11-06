@@ -2,7 +2,6 @@
 # setup.sh fills in STEAM_PATH.
 [Unit]
 Description=houridle: Steam client
-# Steam can't live without its display: stop and start along with it.
 BindsTo=houridle-display.service
 After=houridle-display.service
 
@@ -10,7 +9,6 @@ After=houridle-display.service
 Environment=DISPLAY=:99
 Environment=XAUTHORITY=%h/houridle/Xauthority
 ExecStart=STEAM_PATH -silent
-# Also when Steam exits cleanly (e.g. "Exit Steam" clicked over VNC).
 Restart=always
 RestartSec=30
 

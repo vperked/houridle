@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"houridle/backend/config"
-	"houridle/backend/freegames"
-	"houridle/backend/gamestore"
-	"houridle/backend/web"
+	"houridle/backend/features/freegames"
+	"houridle/backend/features/gamestore"
+	"houridle/backend/run/config"
+	"houridle/backend/views/web"
 )
 
 // fakeShop stands in for the Steam store and its checkout.

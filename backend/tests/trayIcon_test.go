@@ -6,7 +6,7 @@ import (
 	"image/png"
 	"testing"
 
-	"houridle/backend/tray"
+	"houridle/backend/views/tray"
 )
 
 // The tray icon is drawn in code; check it's a valid .ico Windows can load.

@@ -1,0 +1,642 @@
+package steamcm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"houridle/backend/online/steamauth"
+)
+
+// Values Steam's own client reports when signing in. Steam can change
+// what it expects; SetVersions updates them while houridle runs (see
+// package steamver).
+const (
+	DefaultProtocolVersion = 65580
+	DefaultClientVersion   = 1771
+	osWindows10            = 16
+	defaultBeat            = 9 * time.Second
+	logonTimeout           = 30 * time.Second
+)
+
+// Config is who to sign in as.
+type Config struct {
+	SteamID      uint64
+	AccountName  string // optional; sent along with the token like Steam's own client does
+	RefreshToken string // a secret; never logged or printed here
+
+	// OnPlaying is told when another device starts or stops playing on the
+	// account. While blocked, Steam won't count this session's games.
+	OnPlaying func(blocked bool, appID uint32)
+
+	// Status is how the account shows to friends while idling: one of
+	// Statuses ("" means online). See SetGames.
+	Status string
+}
+
+// Statuses are the friends-list states houridle can idle as. "offline"
+// leaves the session signed in as Offline: Steam still records playtime,
+// but nobody sees you in a game. "invisible" is the same to friends but
+// keeps you signed in to chat, like the Steam client's Invisible.
+var Statuses = map[string]uint64{
+	"online":    1,
+	"busy":      2,
+	"away":      3,
+	"invisible": 7,
+	"offline":   0,
+}
+
+// ParseStatus checks a status name, case-insensitively ("" is online).
+func ParseStatus(name string) (string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return "online", nil
+	}
+	if _, ok := Statuses[name]; !ok {
+		return "", fmt.Errorf("%q isn't a status: use online, away, busy, invisible or offline", name)
+	}
+	return name, nil
+}
+
+// LogonError is Steam refusing the sign-in.
+type LogonError struct {
+	EResult  int
+	Extended int    // Steam's extra detail code, 0 if none
+	Server   string // the server that gave this answer
+	Servers  int    // how many servers have refused (they all said no if > 1)
+}
+
+func (e *LogonError) Error() string {
+	detail := fmt.Sprintf("Steam error %d", e.EResult)
+	if e.Extended != 0 {
+		detail += fmt.Sprintf(", detail %d", e.Extended)
+	}
+	if e.Servers > 1 {
+		detail += fmt.Sprintf(", refused by %d servers", e.Servers)
+	}
+	return fmt.Sprintf("%s (%s)", steamauth.EResultText(e.EResult), detail)
+}
+
+// AuthFailed reports whether the saved sign-in is no longer good (as opposed
+// to Steam being busy or the account being in use).
+func (e *LogonError) AuthFailed() bool {
+	switch e.EResult {
+	case steamauth.EResultInvalidPassword, 8, steamauth.EResultAccessDenied, 26, steamauth.EResultExpired, 63, 65, 85:
+		return true
+	}
+	return false
+}
+
+const (
+	eresultBusy         = 10
+	eresultTryAnotherCM = 48
+)
+
+func (e *LogonError) tryAnotherServer() bool {
+	switch e.EResult {
+	case eresultBusy, steamauth.EResultUnavailable, eresultTryAnotherCM:
+		return true
+	}
+	return false
+}
+
+// RateLimited reports whether Steam asked houridle to slow down.
+func (e *LogonError) RateLimited() bool {
+	return e.EResult == steamauth.EResultRateLimited || e.EResult == steamauth.EResultLoginThrottle
+}
+
+// LoggedOffError is Steam ending an established session.
+type LoggedOffError struct{ EResult int }
+
+func (e *LoggedOffError) Error() string {
+	return fmt.Sprintf("Steam signed this session out (error %d)", e.EResult)
+}
+
+// Session is a signed-in connection to Steam that can report games as played.
+type Session struct {
+	c   *conn
+	cfg Config
+
+	sessionID int32
+	logonDone chan struct{}
+
+	done chan struct{}
+	once sync.Once
+	err  error // why it ended; set before done closes
+
+	mu        sync.Mutex
+	live      bool
+	games     []uint32
+	blocked   bool
+	statusSet bool // friends-list status sent (once, when idling starts)
+
+	country      string          // the account's country, from Steam's account info after sign-in
+	licenses     map[uint32]bool // package IDs the account owns (Steam sends them after sign-in)
+	licenseList  []License       // the same, with how and when each was added
+	licensesSeen chan struct{}   // closed and replaced each time the list arrives
+	newItems     int             // unseen new items in the inventory (-1 until Steam says)
+	itemsSeen    chan struct{}   // closed and replaced each time Steam sends the count
+
+	jobs    map[uint64]chan Message // requests waiting for a reply, by job ID
+	byEmsg  map[uint32]chan Message // ...and by reply type, for replies without a job ID
+	nextJob uint64
+}
+
+// maxRefusals is how many different servers must refuse a sign-in before
+// houridle believes it. One server saying no can be that server's quirk.
+const maxRefusals = 3
+
+// Connect signs in with the refresh token and returns once Steam accepts it.
+func Connect(ctx context.Context, cfg Config) (*Session, error) {
+	info, err := steamauth.ParseToken(cfg.RefreshToken)
+	if err != nil || info.SteamID != cfg.SteamID || !info.CanLogOn() {
+		return nil, errors.New("the saved sign-in doesn't match its account")
+	}
+	servers, err := ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var refused *LogonError
+	var busy *LogonError
+	refusals := 0
+	var netErr error
+	for i, server := range servers {
+		if i == maxServerTries {
+			break
+		}
+		c, err := dial(ctx, ServerURL(server))
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			markBad(server)
+			netErr = fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
+			continue
+		}
+		s, err := logOn(ctx, c, cfg)
+		if err == nil {
+			return s, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var le *LogonError
+		if !errors.As(err, &le) {
+			if errors.Is(err, steamauth.ErrNetwork) {
+				netErr = err
+				continue
+			}
+			return nil, err
+		}
+		le.Server = server
+		if le.tryAnotherServer() {
+			busy = le
+			continue
+		}
+		refusals++
+		le.Servers = refusals
+		refused = le
+		if !le.AuthFailed() || refusals >= maxRefusals {
+			return nil, le
+		}
+	}
+	switch {
+	case refused != nil:
+		return nil, refused
+	case busy != nil:
+		return nil, busy
+	case netErr != nil:
+		return nil, netErr
+	}
+	return nil, fmt.Errorf("%w: no server answered", steamauth.ErrNetwork)
+}
+
+// logOn signs in over an open connection.
+func logOn(ctx context.Context, c *conn, cfg Config) (*Session, error) {
+	s := &Session{c: c, cfg: cfg, done: make(chan struct{}), logonDone: make(chan struct{}), jobs: map[uint64]chan Message{}, licensesSeen: make(chan struct{}), newItems: -1, itemsSeen: make(chan struct{})}
+	defer close(s.logonDone)
+
+	logon := make(chan Message, 1)
+	go s.readLoop(logon)
+
+	protocolVersion, clientVersion := Versions()
+	hello := new(steamauth.Encoder).Varint(1, protocolVersion).Out()
+	if err := c.send(ctx, emsgClientHello, header{}, hello); err != nil {
+		s.finish(err)
+		return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
+	}
+	machine := "houridle"
+	req := new(steamauth.Encoder).
+		Varint(1, protocolVersion).
+		Varint(5, clientVersion).
+		String(6, "english").
+		Varint(7, osWindows10).
+		// should_remember_password. The refresh token comes from a persistent
+		// sign-in, and Steam wants the logon to say so: with false it treats
+		// this as a throwaway session and can end the token when it closes,
+		// so the next start is refused with "access denied".
+		Bool(8, true).
+		Varint(21, 2).
+		Varint(33, 2).
+		String(96, machine).
+		Bool(102, true).
+		String(108, cfg.RefreshToken)
+	if cfg.AccountName != "" {
+		req.String(50, cfg.AccountName)
+	}
+	if err := c.send(ctx, emsgClientLogon, header{steamID: cfg.SteamID}, req.Out()); err != nil {
+		s.finish(err)
+		return nil, fmt.Errorf("%w: %v", steamauth.ErrNetwork, err)
+	}
+
+	timer := time.NewTimer(logonTimeout)
+	defer timer.Stop()
+	select {
+	case m := <-logon:
+		return s.finishLogon(m)
+	case <-s.done:
+		select {
+		case m := <-logon:
+			if _, err := s.finishLogon(m); err != nil {
+				return nil, err
+			}
+		default:
+		}
+		return nil, fmt.Errorf("%w: connection closed while signing in", steamauth.ErrNetwork)
+	case <-timer.C:
+		s.finish(errors.New("sign-in timed out"))
+		return nil, fmt.Errorf("%w: Steam didn't answer the sign-in", steamauth.ErrNetwork)
+	case <-ctx.Done():
+		s.finish(ctx.Err())
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Session) finishLogon(m Message) (*Session, error) {
+	resp, err := steamauth.Decode(m.Body)
+	if err != nil {
+		s.finish(err)
+		return nil, err
+	}
+	eresult := 2
+	if resp.Has(1) {
+		eresult = int(int32(resp.Int(1)))
+	}
+	if eresult != steamauth.EResultOK {
+		le := &LogonError{EResult: eresult, Extended: int(int32(resp.Int(10)))}
+		s.finish(le)
+		return nil, le
+	}
+	// The session must be for the account the token belongs to.
+	if got := m.Header.Uint(1); got != s.cfg.SteamID {
+		err := errors.New("Steam signed in a different account than the saved one; disconnected")
+		s.finish(err)
+		return nil, err
+	}
+	s.sessionID = int32(m.Header.Int(2))
+	s.mu.Lock()
+	s.live = true
+	s.mu.Unlock()
+
+	beat := time.Duration(resp.Int(3)) * time.Second
+	if beat <= 0 {
+		beat = defaultBeat
+	}
+	go s.heartbeat(beat)
+	go s.keepAlive(PingEvery, PingTimeout)
+	return s, nil
+}
+
+// readLoop handles everything Steam sends until the connection ends.
+func (s *Session) readLoop(logon chan<- Message) {
+	for {
+		msgs, err := s.c.read(context.Background())
+		if err != nil {
+			s.finish(err)
+			return
+		}
+		for _, m := range msgs {
+			switch m.EMsg {
+			case emsgClientLogOnResponse:
+				select {
+				case logon <- m:
+				default:
+				}
+				select {
+				case <-s.logonDone:
+				case <-s.done:
+					return
+				}
+			case emsgClientLoggedOff:
+				d, _ := steamauth.Decode(m.Body)
+				code := steamauth.EResultFail
+				if d != nil && d.Has(1) {
+					code = int(int32(d.Int(1)))
+				}
+				s.finish(&LoggedOffError{EResult: code})
+				return
+			case emsgServiceMethodResp, emsgClientGetUserStatsResponse, emsgClientStoreUserStatsResponse, emsgClientRequestFreeLicenseResp:
+				s.deliver(m)
+			case emsgClientLicenseList:
+				s.setLicenses(m.Body)
+			case emsgClientItemAnnouncements:
+				if d, err := steamauth.Decode(m.Body); err == nil {
+					s.mu.Lock()
+					s.newItems = int(d.Uint(1)) // count_new_items
+					close(s.itemsSeen)
+					s.itemsSeen = make(chan struct{})
+					s.mu.Unlock()
+				}
+			case emsgClientAccountInfo:
+				if d, err := steamauth.Decode(m.Body); err == nil && d.Str(2) != "" {
+					s.mu.Lock()
+					s.country = d.Str(2) // ip_country
+					s.mu.Unlock()
+				}
+			case emsgPlayingSessionState:
+				if d, err := steamauth.Decode(m.Body); err == nil {
+					s.setBlocked(d.Bool(2), uint32(d.Uint(3)))
+				}
+			case emsgKickPlayingSession:
+				s.setBlocked(true, 0)
+			}
+		}
+	}
+}
+
+// setBlocked records that another device is (or has stopped) playing. When
+// it stops, the games are reported again; houridle never takes the account
+// back from someone who is playing for real.
+func (s *Session) setBlocked(blocked bool, app uint32) {
+	s.mu.Lock()
+	was := s.blocked
+	s.blocked = blocked
+	live := s.live
+	games := append([]uint32(nil), s.games...)
+	s.mu.Unlock()
+
+	if !live {
+		return
+	}
+	if s.cfg.OnPlaying != nil && was != blocked {
+		s.cfg.OnPlaying(blocked, app)
+	}
+	if was && !blocked && len(games) > 0 {
+		s.send(emsgClientGamesPlayed, gamesPlayedBody(games))
+	}
+}
+
+func (s *Session) heartbeat(every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if err := s.send(emsgClientHeartBeat, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+var (
+	PingEvery   = 2 * time.Minute
+	PingTimeout = 30 * time.Second
+)
+
+func (s *Session) keepAlive(every, timeout time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			err := s.c.ws.Ping(ctx)
+			cancel()
+			if err != nil {
+				s.finish(fmt.Errorf("Steam stopped answering: %w", err))
+				return
+			}
+		}
+	}
+}
+
+func (s *Session) send(emsg uint32, body []byte) error {
+	return s.sendWithin(10*time.Second, emsg, body)
+}
+
+func (s *Session) sendWithin(timeout time.Duration, emsg uint32, body []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := s.c.send(ctx, emsg, header{steamID: s.cfg.SteamID, sessionID: s.sessionID}, body)
+	if err != nil {
+		s.finish(err)
+	}
+	return err
+}
+
+func gamesPlayedBody(appIDs []uint32) []byte {
+	b := new(steamauth.Encoder)
+	for _, id := range appIDs {
+		b.Message(1, new(steamauth.Encoder).Fixed64(2, uint64(id)))
+	}
+	return b.Varint(2, osWindows10).Out()
+}
+
+// SetGames reports exactly these apps as being played (none stops them all).
+//
+// The first time games are set, the session also takes its status (Online
+// unless Config.Status says otherwise). A session signs in as Offline, and
+// while it is, Steam still records the playtime but shows nobody (friends,
+// your profile) that you're in a game.
+func (s *Session) SetGames(appIDs []uint32) error {
+	s.mu.Lock()
+	s.games = append([]uint32(nil), appIDs...)
+	blocked := s.blocked
+	setStatus := !s.statusSet && len(appIDs) > 0
+	s.statusSet = s.statusSet || setStatus
+	s.mu.Unlock()
+	if state := s.persona(); setStatus && state != 0 {
+		if err := s.send(emsgClientChangeStatus, new(steamauth.Encoder).Varint(1, state).Out()); err != nil {
+			return err
+		}
+	}
+	if blocked {
+		return nil // sent when the other device stops
+	}
+	return s.send(emsgClientGamesPlayed, gamesPlayedBody(appIDs))
+}
+
+// setLicenses records the account's licenses (CMsgClientLicenseList).
+func (s *Session) setLicenses(body []byte) {
+	d, err := steamauth.Decode(body)
+	if err != nil {
+		return
+	}
+	owned := map[uint32]bool{}
+	var list []License
+	for _, l := range d.Messages(2) {
+		owned[uint32(l.Uint(1))] = true
+		list = append(list, License{
+			PackageID:     uint32(l.Uint(1)),
+			Created:       time.Unix(int64(uint32(l.Uint(2))), 0),
+			PaymentMethod: uint32(l.Uint(6)),
+			Flags:         uint32(l.Uint(7)),
+			OwnerID:       uint32(l.Uint(12)),
+		})
+	}
+	s.mu.Lock()
+	s.licenses = owned
+	s.licenseList = list
+	close(s.licensesSeen)
+	s.licensesSeen = make(chan struct{})
+	s.mu.Unlock()
+}
+
+// License is one package on the account, from Steam's license list.
+type License struct {
+	PackageID     uint32
+	Created       time.Time // when it was added to the account (bought, claimed, activated)
+	PaymentMethod uint32    // Steam's EPaymentMethod: how it was paid for, if at all
+	Flags         uint32    // Steam's ELicenseFlags (expired, cancelled...)
+	OwnerID       uint32    // the account ID that owns it; another one's for a shared game
+}
+
+// LicenseList is Licenses with each package's details.
+func (s *Session) LicenseList(ctx context.Context) ([]License, error) {
+	if _, err := s.Licenses(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.licenseList), nil
+}
+
+// Licenses returns the package IDs the account owns. Steam sends the list
+// right after sign-in and again whenever it changes; this waits (up to the
+// context) for the first one.
+func (s *Session) Licenses(ctx context.Context) (map[uint32]bool, error) {
+	s.mu.Lock()
+	owned, seen := s.licenses, s.licensesSeen
+	s.mu.Unlock()
+	if owned != nil {
+		return owned, nil
+	}
+	select {
+	case <-seen:
+	case <-s.done:
+		return nil, fmt.Errorf("%w: connection closed", steamauth.ErrNetwork)
+	case <-ctx.Done():
+		return nil, errors.New("Steam didn't send the account's licenses")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.licenses, nil
+}
+
+// NewItems is how many new, unseen items the account's inventory has (a
+// card drop is one), -1 if Steam hasn't said yet, and a channel closed the
+// next time Steam sends the count.
+func (s *Session) NewItems() (int, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.newItems, s.itemsSeen
+}
+
+// LicensesChanged is closed the next time Steam sends the license list
+// (after a game is added, for example).
+func (s *Session) LicensesChanged() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.licensesSeen
+}
+
+// persona is the Steam persona state for Config.Status (0 = stay Offline).
+func (s *Session) persona() uint64 {
+	name, err := ParseStatus(s.cfg.Status)
+	if err != nil {
+		name = "online"
+	}
+	return Statuses[name]
+}
+
+// SteamID is the account this session is signed in as.
+func (s *Session) SteamID() uint64 { return s.cfg.SteamID }
+
+// Blocked reports whether another device is playing on the account.
+func (s *Session) Blocked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.blocked
+}
+
+// Done is closed when the connection ends; Err then says why.
+func (s *Session) Done() <-chan struct{} { return s.done }
+
+// Err is why the session ended (nil while it is running).
+func (s *Session) Err() error {
+	select {
+	case <-s.done:
+		return s.err
+	default:
+		return nil
+	}
+}
+
+func (s *Session) finish(err error) {
+	s.once.Do(func() {
+		s.err = err
+		close(s.done)
+		s.c.close()
+	})
+}
+
+// Close stops the games and disconnects.
+//
+// It deliberately does NOT send Steam a LogOff message. For a sign-in made
+// with a saved token, LogOff means "sign out": Steam ends that token for
+// good, and the next start is refused with "access denied" until you log in
+// again. Just dropping the connection leaves the token alone.
+func (s *Session) Close() {
+	select {
+	case <-s.done:
+		return
+	default:
+	}
+	s.sendWithin(time.Second, emsgClientGamesPlayed, gamesPlayedBody(nil))
+	s.finish(nil)
+}
+
+var (
+	versionMu       sync.Mutex
+	protocolVersion uint64 = DefaultProtocolVersion
+	clientVersion   uint64 = DefaultClientVersion
+)
+
+// Versions are the protocol and client versions sent when signing in.
+func Versions() (protocol, client uint64) {
+	versionMu.Lock()
+	defer versionMu.Unlock()
+	return protocolVersion, clientVersion
+}
+
+// SetVersions changes the versions sent when signing in from now on.
+func SetVersions(protocol, client uint64) {
+	versionMu.Lock()
+	defer versionMu.Unlock()
+	protocolVersion, clientVersion = protocol, client
+}
+
+// ConfigFor is the Config for a saved sign-in.
+func ConfigFor(sess steamauth.Session) Config {
+	return Config{SteamID: sess.SteamID, AccountName: sess.AccountName, RefreshToken: sess.RefreshToken}
+}
