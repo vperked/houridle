@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"houridle/backend/client/achievements"
@@ -648,15 +649,29 @@ func (c *Controller) Logout(id string) error {
 	return nil
 }
 
-// ---------- QR sign-in ----------
+// ---------- sign-in ----------
 
 const loginTimeout = 5 * time.Minute
 
+// signIn is a sign-in under way: a QR code waiting to be scanned, or a
+// password sign-in waiting for Steam Guard. A goroutine polls Steam until
+// it's done, fails, times out or is replaced.
+type signIn struct {
+	client *steamauth.Client
+	user   string              // password sign-ins: the account name
+	kind   steamauth.GuardType // the code Steam Guard wants (password sign-ins)
+	cancel context.CancelFunc
+
+	mu      sync.Mutex // one call to Steam at a time with pending
+	pending *steamauth.Pending
+}
+
 // BeginLogin starts a QR sign-in: the page shows the code, the Steam
-// mobile app scans it. A sign-in already waiting is reused.
+// mobile app scans it. A QR sign-in already waiting is reused; any other
+// sign-in under way is dropped.
 func (c *Controller) BeginLogin() (web.Login, error) {
 	c.mu.Lock()
-	if c.login.State == "waiting" {
+	if c.login.State == "waiting" && c.login.Method == "qr" {
 		l := c.login
 		c.mu.Unlock()
 		return l, nil
@@ -670,67 +685,193 @@ func (c *Controller) BeginLogin() (web.Login, error) {
 		cancel()
 		return web.Login{}, err
 	}
-	c.setLogin(web.Login{State: "waiting", URL: p.ChallengeURL})
-	go func() {
-		defer cancel()
-		for {
-			res, err := client.Poll(ctx, p)
-			if err != nil {
-				c.setLogin(web.Login{State: "failed", Error: loginError(err)})
-				return
-			}
-			if res != nil {
-				c.finishLogin(res)
-				return
-			}
-			c.mu.Lock()
-			changed := c.login.URL != p.ChallengeURL
-			c.mu.Unlock()
-			if changed { // Steam rotated the code
-				c.setLogin(web.Login{State: "waiting", URL: p.ChallengeURL})
-			}
-			select {
-			case <-ctx.Done():
-				c.setLogin(web.Login{State: "failed", Error: "timed out waiting for the Steam app; start again"})
-				return
-			case <-time.After(p.Interval):
-			}
-		}
-	}()
+	s := &signIn{client: client, pending: p, cancel: cancel}
+	c.startSignIn(s, web.Login{State: "waiting", Method: "qr", URL: p.ChallengeURL})
+	go c.pollSignIn(ctx, s)
 	return c.LoginState(), nil
 }
 
-func (c *Controller) setLogin(l web.Login) {
+// BeginPasswordLogin starts a sign-in with an account name and password.
+// The password goes only to Steam, sealed with Steam's key for the account
+// (see steamauth.BeginPassword), and isn't kept. Steam Guard then wants a
+// code (SubmitLoginCode), or an approval in the Steam app or from an email,
+// which the page waits for.
+func (c *Controller) BeginPasswordLogin(ctx context.Context, user, password string) (web.Login, error) {
+	user = strings.TrimSpace(user)
+	if user == "" || password == "" {
+		return web.Login{}, errors.New("enter the account name and password")
+	}
+	client := steamauth.NewClient()
+	p, err := client.BeginPassword(ctx, user, password, "houridle")
+	if err != nil {
+		return web.Login{}, fmt.Errorf("sign-in failed: %w", err)
+	}
+	s := &signIn{client: client, pending: p, user: user}
+	l := web.Login{State: "waiting", Method: "password"}
+	if kind, hint, ok := p.NeedsCode(); ok {
+		s.kind = kind
+		l.Code = "app"
+		if kind == steamauth.GuardEmailCode {
+			l.Code, l.Hint = "email", hint
+		}
+	}
+	switch {
+	case p.CanConfirm(steamauth.GuardDeviceConfirmation):
+		l.Approve = "app"
+	case p.CanConfirm(steamauth.GuardEmailConfirmation):
+		l.Approve = "email"
+	}
+	pollCtx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	s.cancel = cancel
+	c.startSignIn(s, l)
+	go c.pollSignIn(pollCtx, s)
+	return c.LoginState(), nil
+}
+
+// SubmitLoginCode answers the password sign-in's Steam Guard code. A wrong
+// code can be tried again; the sign-in keeps waiting.
+func (c *Controller) SubmitLoginCode(ctx context.Context, code string) (web.Login, error) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return web.Login{}, errors.New("enter the Steam Guard code")
+	}
+	c.mu.Lock()
+	s, wanted := c.signIn, c.login.Code != ""
+	c.mu.Unlock()
+	if s == nil || !wanted {
+		return web.Login{}, errors.New("no sign-in is waiting for a code; start again")
+	}
+	s.mu.Lock()
+	err := s.client.SubmitCode(ctx, s.pending, s.kind, code)
+	s.mu.Unlock()
+	if err != nil {
+		var se *steamauth.Error
+		if errors.As(err, &se) {
+			return web.Login{}, errors.New(steamauth.EResultText(se.EResult))
+		}
+		return web.Login{}, err
+	}
+	// Accepted: Steam hands over the sign-in on the next poll.
+	c.updateLogin(s, func(l *web.Login) { l.Code, l.Hint, l.Approve = "", "", "" })
+	return c.LoginState(), nil
+}
+
+// CancelLogin drops the sign-in under way, or clears how the last one
+// ended, so the page can start again.
+func (c *Controller) CancelLogin() {
+	c.mu.Lock()
+	s := c.signIn
+	c.signIn, c.login = nil, web.Login{}
+	c.mu.Unlock()
+	if s != nil {
+		s.cancel()
+	}
+}
+
+// startSignIn makes s the sign-in under way, dropping any other.
+func (c *Controller) startSignIn(s *signIn, l web.Login) {
 	if l.URL != "" {
 		l.QR, _ = web.QRSVG(l.URL)
 	}
 	c.mu.Lock()
-	c.login = l
+	old := c.signIn
+	c.signIn, c.login = s, l
 	c.mu.Unlock()
+	if old != nil {
+		old.cancel()
+	}
 }
 
-// LoginState is the QR sign-in's progress.
+// updateLogin changes what the page sees of s, if s is still the sign-in
+// under way. Once it's done or failed, nothing is under way any more.
+func (c *Controller) updateLogin(s *signIn, change func(*web.Login)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.signIn != s {
+		return
+	}
+	change(&c.login)
+	if c.login.State != "waiting" {
+		c.signIn = nil
+	}
+}
+
+// pollSignIn asks Steam about s until it's done, fails or times out. A
+// sign-in that was replaced or cancelled just stops.
+func (c *Controller) pollSignIn(ctx context.Context, s *signIn) {
+	defer s.cancel()
+	fail := func(msg string) {
+		c.updateLogin(s, func(l *web.Login) { *l = web.Login{State: "failed", Method: l.Method, Error: msg} })
+	}
+	for {
+		s.mu.Lock()
+		res, err := s.client.Poll(ctx, s.pending)
+		url, wait := s.pending.ChallengeURL, s.pending.Interval
+		s.mu.Unlock()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return
+		}
+		if err != nil {
+			fail(loginError(err))
+			return
+		}
+		if res != nil {
+			if res.AccountName == "" {
+				res.AccountName = s.user
+			}
+			c.finishLogin(s, res)
+			return
+		}
+		if url != "" { // Steam may rotate the QR code
+			c.mu.Lock()
+			changed := c.signIn == s && c.login.URL != url
+			c.mu.Unlock()
+			if changed {
+				qr, _ := web.QRSVG(url)
+				c.updateLogin(s, func(l *web.Login) { l.URL, l.QR = url, qr })
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				fail(loginError(ctx.Err()))
+			}
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+// LoginState is the sign-in's progress.
 func (c *Controller) LoginState() web.Login {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.login
 }
 
-func (c *Controller) finishLogin(res *steamauth.Result) {
+func (c *Controller) finishLogin(s *signIn, res *steamauth.Result) {
+	c.mu.Lock()
+	current := c.signIn == s
+	c.mu.Unlock()
+	if !current { // cancelled at the last moment: save nothing
+		return
+	}
 	accts, err := steamauth.DefaultAccounts()
 	if err == nil {
 		mgr := &steamauth.Manager{Client: steamauth.NewClient(), Store: accts.StoreFor(res.SteamID)}
 		err = mgr.Remember(res, nil)
 	}
 	if err != nil {
-		c.setLogin(web.Login{State: "failed", Error: "signed in, but couldn't save it: " + err.Error()})
+		c.updateLogin(s, func(l *web.Login) {
+			*l = web.Login{State: "failed", Method: l.Method, Error: "signed in, but couldn't save it: " + err.Error()}
+		})
 		return
 	}
 	label := res.AccountName
 	if label == "" {
 		label = steamauth.FormatSteamID(res.SteamID)
 	}
-	c.setLogin(web.Login{State: "done", Account: label})
+	c.updateLogin(s, func(l *web.Login) { *l = web.Login{State: "done", Method: l.Method, Account: label} })
 	c.emit(idler.Event{At: time.Now(), Level: idler.EventGood, Text: "Signed in as " + label + " and saved it"})
 
 	// With nothing to idle with yet, use the new account right away.
@@ -744,7 +885,7 @@ func (c *Controller) finishLogin(res *steamauth.Result) {
 
 func loginError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed out waiting for the Steam app; start again"
+		return "timed out waiting for the sign-in to be approved; start again"
 	}
 	return "sign-in failed: " + err.Error()
 }

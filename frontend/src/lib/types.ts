@@ -125,10 +125,16 @@ export interface AccountInfo {
   damaged?: boolean;
 }
 
+// Login is a sign-in in progress (or its outcome): a QR code the Steam
+// app scans, or an account name and password and then Steam Guard.
 export interface Login {
   state: "" | "waiting" | "done" | "failed";
+  method?: "qr" | "password";
   url?: string;
   qr?: string; // SVG of url
+  code?: "app" | "email"; // password: Steam Guard wants a code from here
+  approve?: "app" | "email"; // password: or it can be approved there instead
+  hint?: string; // where Steam emailed the code
   account?: string;
   error?: string;
 }

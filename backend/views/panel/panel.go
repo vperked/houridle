@@ -88,6 +88,7 @@ type Controller struct {
 	steam     steamState                    // what Steam's sign-in expects
 	standing  standingState                 // the account's bans and restrictions
 	login     web.Login
+	signIn    *signIn // the sign-in under way, if any (see BeginLogin)
 }
 
 // source is what idling goes through: the Steam client, or a saved account.

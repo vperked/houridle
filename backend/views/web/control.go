@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,9 +38,9 @@ type Controller interface {
 	GameDeals(ctx context.Context, q DealsQuery) (Deals, error)
 	BuyGame(ctx context.Context, appID uint32, agreed int) (GameBought, error)
 
-	UseSource(id string) error   // "client" or a SteamID
-	MakeDefault(id string) error // a SteamID
-	Logout(id string) error      // a SteamID
+	UseSource(id string) error                                                    // "client" or a SteamID
+	MakeDefault(id string) error                                                  // a SteamID
+	Logout(id string) error                                                       // a SteamID
 	BeginLogin() (Login, error)                                                   // a QR sign-in
 	BeginPasswordLogin(ctx context.Context, user, password string) (Login, error) // a sign-in with a password
 	SubmitLoginCode(ctx context.Context, code string) (Login, error)              // the Steam Guard code it asks for

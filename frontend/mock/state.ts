@@ -46,6 +46,7 @@ export interface MockState {
   freeGames: FreeGame[];
   f2p: FreeToPlayEntry[];
   loginPolls: number;
+  loginUser: string; // the account name of a password sign-in
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -111,6 +112,7 @@ export function createState(scenario: Scenario, now = Date.now()): MockState {
     freeGames: data.FREE_GAMES.map((g) => ({ ...g })),
     f2p: data.F2P.map((g) => ({ ...g })),
     loginPolls: 0,
+    loginUser: "",
   };
   if (!empty) {
     startRun(s, now);

@@ -167,21 +167,46 @@ export const routes: Record<string, Handler> = {
   },
   "POST /api/login": ({ s }): Login => {
     s.loginPolls = 0;
-    s.panel.login = { state: "waiting", url: "https://s.team/q/1/4628351906718273645", qr: qrSVG() };
+    s.loginUser = "";
+    s.panel.login = { state: "waiting", method: "qr", url: "https://s.team/q/1/4628351906718273645", qr: qrSVG() };
     return s.panel.login;
   },
-  // The test sign-in is approved on the third look (about 6 seconds).
+  // A password sign-in: "wrong" is the wrong password; an account name
+  // with "email" in it gets an emailed code, any other the Steam app's.
+  "POST /api/login/password": ({ s, body }): Login => {
+    const user = str(body, "user").trim();
+    if (!user || !str(body, "password")) throw bad("enter the account name and password");
+    if (str(body, "password") === "wrong") throw refuse("sign-in failed: wrong username or password (Steam error 5)");
+    s.loginPolls = 0;
+    s.loginUser = user;
+    s.panel.login = user.includes("email") ? { state: "waiting", method: "password", code: "email", hint: "gmail.com", approve: "email" } : { state: "waiting", method: "password", code: "app", approve: "app" };
+    return s.panel.login;
+  },
+  // Any code but 00000 is right.
+  "POST /api/login/code": ({ s, body }): Login => {
+    if (!s.panel.login.code) throw refuse("no sign-in is waiting for a code; start again");
+    if (str(body, "code").trim() === "00000") throw refuse("that Steam Guard code is wrong or expired");
+    s.loginPolls = 1;
+    s.panel.login = { state: "waiting", method: "password" };
+    return s.panel.login;
+  },
+  "POST /api/login/cancel": ({ s }): Login => {
+    s.panel.login = { state: "" };
+    return s.panel.login;
+  },
+  // The test sign-in is approved on the third look (about 6 seconds); a
+  // password sign-in only once its code is in.
   "GET /api/login": ({ s }): Login => {
-    if (s.panel.login.state === "waiting" && ++s.loginPolls >= 3) {
+    if (s.panel.login.state === "waiting" && !s.panel.login.code && ++s.loginPolls >= 3) {
       const id = String(76561198000000000 + 4200 + s.panel.accounts.length);
-      const name = `test_account_${s.panel.accounts.length + 1}`;
+      const name = s.loginUser || `test_account_${s.panel.accounts.length + 1}`;
       s.panel.accounts.push({ steamId: id, name, default: s.panel.accounts.length === 0, expires: new Date(Date.now() + 200 * 864e5).toISOString() });
       s.libraries[id] = [...data.ALT_LIBRARY];
       if (!s.panel.source) {
         s.panel.source = id;
         s.panel.signedIn = true;
       }
-      s.panel.login = { state: "done", account: name };
+      s.panel.login = { state: "done", method: s.panel.login.method, account: name };
       addEvent(s, "good", `Signed in to Steam as ${name}`);
     }
     return s.panel.login;
