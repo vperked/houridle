@@ -188,11 +188,12 @@ function SignIn({ login: initial, refresh }: { login: Login; refresh: () => Prom
   };
 
   const beginQR = () => call("/api/login");
-  // A QR code is asked for as soon as that way is picked.
+  // A QR code is asked for as soon as that way is picked (or started over).
   const qrWaiting = login?.state === "waiting" && login.method !== "password";
+  const fresh = !login || login.state === "";
   useEffect(() => {
-    if (open && way === "qr" && !qrWaiting && login?.state !== "failed" && login?.state !== "done") beginQR();
-  }, [open, way]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (open && way === "qr" && fresh) beginQR();
+  }, [open, way, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signIn = async (e: FormEvent) => {
     e.preventDefault();
@@ -306,7 +307,7 @@ function SignIn({ login: initial, refresh }: { login: Login; refresh: () => Prom
 function Guard({ login, code, setCode, busy, onSubmit }: { login: Login; code: string; setCode: (c: string) => void; busy: boolean; onSubmit: (e: FormEvent) => void }) {
   const approve = login.approve === "app" ? "approve it in the Steam app" : login.approve === "email" ? "open the link Steam emailed you" : "";
   if (login.code) {
-    const where = login.code === "app" ? "the Steam app (Steam Guard)" : `your email${login.hint ? ` (${login.hint})` : ""}`;
+    const where = login.code === "app" ? "the Steam app" : `your email${login.hint ? ` (${login.hint})` : ""}`;
     return (
       <form onSubmit={onSubmit} className="space-y-3">
         <label className="block">
