@@ -26,11 +26,15 @@ interface ToastItem {
   title: string;
   tone: Tone;
   detail: string;
+  leaving?: boolean;
 }
 
 const ToastContext = createContext<ShowToast>(() => undefined);
 
 const MAX = 4;
+// How long a toast takes to go: it fades (animate-toast-out in index.css),
+// then the gap closes (the grid row below).
+const LEAVE_MS = 300;
 const DURATION: Record<Tone, number> = { good: 4000, info: 5000, warn: 7000, bad: 9000 };
 
 const TONES: Record<Tone, { icon: string; bar: string; path: string }> = {
@@ -44,7 +48,12 @@ let nextID = 1;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const dismiss = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
+  // A dismissed toast fades away while the ones below close up the gap,
+  // then it's dropped.
+  const dismiss = useCallback((id: number) => {
+    setToasts((list) => list.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), LEAVE_MS);
+  }, []);
 
   // show(title, tone?, detail?) — tone is "good", "info", "warn" or "bad".
   const show = useCallback((title: string, tone: Tone = "good", detail = "") => {
@@ -58,7 +67,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-[60] flex flex-col items-center gap-2 px-4 lg:top-5 lg:items-end lg:px-6"
+        className="pointer-events-none fixed inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-[60] flex flex-col items-center px-4 lg:top-5 lg:items-end lg:px-6"
       >
         {toasts.map((t) => (
           <Toast key={t.id} toast={t} onClose={() => dismiss(t.id)} />
@@ -76,50 +85,56 @@ function Toast({ toast, onClose }: { toast: ToastItem; onClose: () => void }) {
   const started = useRef(Date.now());
 
   useEffect(() => {
-    if (paused) return;
+    if (paused || toast.leaving) return;
     started.current = Date.now();
     const t = setTimeout(onClose, left.current);
     return () => {
       clearTimeout(t);
       left.current -= Date.now() - started.current;
     };
-  }, [paused, onClose]);
+  }, [paused, toast.leaving, onClose]);
 
   return (
-    <div
-      role={toast.tone === "bad" ? "alert" : "status"}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onTouchStart={() => setPaused(true)}
-      onTouchEnd={() => setPaused(false)}
-      className="animate-toast pointer-events-auto relative w-full max-w-sm overflow-hidden rounded-2xl border border-line bg-surface/95 shadow-[0_10px_30px_-10px_rgb(0_0_0/0.35)] backdrop-blur-xl"
-    >
-      <div className="flex items-start gap-3 p-3.5 pr-10">
-        <span className={`mt-px grid size-5 shrink-0 place-items-center ${tone.icon}`}>
-          <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={tone.path} />
-          </svg>
-        </span>
-        <div className="min-w-0">
-          <p className="text-[15px] font-semibold">{toast.title}</p>
-          {toast.detail && <p className="sub mt-0.5 text-[14px] break-words">{toast.detail}</p>}
+    // The grid row shrinks to nothing as the toast leaves, so the stack
+    // closes up smoothly instead of jumping.
+    <div className={`grid w-full max-w-sm transition-[grid-template-rows] delay-75 duration-200 ease-in-out ${toast.leaving ? "grid-rows-[0fr]" : "grid-rows-[1fr]"}`}>
+      <div className="min-h-0">
+        <div
+          role={toast.tone === "bad" ? "alert" : "status"}
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onTouchStart={() => setPaused(true)}
+          onTouchEnd={() => setPaused(false)}
+          className={`${toast.leaving ? "animate-toast-out pointer-events-none" : "animate-toast pointer-events-auto"} relative mb-2 w-full overflow-hidden rounded-2xl border border-line bg-surface/95 shadow-[0_10px_30px_-10px_rgb(0_0_0/0.35)] backdrop-blur-xl`}
+        >
+          <div className="flex items-start gap-3 p-3.5 pr-10">
+            <span className={`mt-px grid size-5 shrink-0 place-items-center ${tone.icon}`}>
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d={tone.path} />
+              </svg>
+            </span>
+            <div className="min-w-0">
+              <p className="text-[15px] font-semibold">{toast.title}</p>
+              {toast.detail && <p className="sub mt-0.5 text-[14px] break-words">{toast.detail}</p>}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Dismiss"
+            className="faint absolute top-2.5 right-2.5 grid size-7 place-items-center rounded-full active:bg-fill"
+          >
+            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M7 7l10 10M17 7L7 17" />
+            </svg>
+          </button>
+          <span
+            aria-hidden="true"
+            className={`absolute bottom-0 left-0 h-0.5 w-full origin-left animate-countdown opacity-60 ${tone.bar}`}
+            style={{ animationDuration: `${duration}ms`, animationPlayState: paused || toast.leaving ? "paused" : "running" }}
+          />
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Dismiss"
-        className="faint absolute top-2.5 right-2.5 grid size-7 place-items-center rounded-full active:bg-fill"
-      >
-        <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-          <path d="M7 7l10 10M17 7L7 17" />
-        </svg>
-      </button>
-      <span
-        aria-hidden="true"
-        className={`absolute bottom-0 left-0 h-0.5 w-full origin-left animate-countdown opacity-60 ${tone.bar}`}
-        style={{ animationDuration: `${duration}ms`, animationPlayState: paused ? "paused" : "running" }}
-      />
     </div>
   );
 }

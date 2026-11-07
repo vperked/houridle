@@ -45,7 +45,7 @@ export function Switch({ checked, onChange, disabled, label }: Omit<CheckboxProp
         className="peer absolute inset-0 z-10 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
       />
       <span aria-hidden="true" className="h-[30px] w-[50px] rounded-full bg-fill ring-1 ring-line ring-inset transition-colors duration-200 peer-checked:bg-good peer-checked:ring-transparent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40 peer-disabled:opacity-40" />
-      <span aria-hidden="true" className="pointer-events-none absolute top-[2px] left-[2px] size-[26px] rounded-full bg-white shadow-[0_2px_6px_rgb(0_0_0/0.2)] transition-transform duration-200 ease-out peer-checked:translate-x-5" />
+      <span aria-hidden="true" className="pointer-events-none absolute top-[2px] left-[2px] size-[26px] rounded-full bg-white shadow-[0_2px_6px_rgb(0_0_0/0.2)] transition-transform duration-300 ease-pop peer-checked:translate-x-5 peer-active:scale-x-110" />
     </span>
   );
 }

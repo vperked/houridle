@@ -22,9 +22,21 @@
   --color-bad: #dc2626;
   --color-warn: #b45309;
 
-  --animate-fade: fade 180ms ease-out both;
-  --animate-sheet: sheet 260ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
-  --animate-toast: toast 220ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+  /* Motion. Things arrive fast and settle slowly (out), leave quickly
+     (in), and small things that you tap get a touch of overshoot (pop). */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-fade: fade 320ms var(--ease-out) both;
+  --animate-fade-out: fade-out 180ms var(--ease-in) both;
+  --animate-rise: rise 420ms var(--ease-out) both;
+  --animate-sheet: sheet 420ms var(--ease-sheet) both;
+  --animate-sheet-out: sheet-out 240ms var(--ease-in) both;
+  --animate-toast: toast 380ms var(--ease-pop) both;
+  --animate-toast-out: toast-out 160ms var(--ease-out) both;
+  --animate-pop: pop 420ms var(--ease-out);
   --animate-countdown: countdown linear forwards;
 }
 
@@ -47,24 +59,89 @@
 
 /* Shown only when loading takes a moment. */
 .loading-late {
-  animation: fade 200ms ease-out 400ms both;
+  animation: fade 240ms var(--ease-out) 400ms both;
+}
+
+/* A screen's sections rise in one after another. Only the first few are
+   staggered; anything further down is off screen anyway. */
+.page-enter > * {
+  animation: var(--animate-rise);
+}
+.page-enter > :nth-child(2) {
+  animation-delay: 40ms;
+}
+.page-enter > :nth-child(3) {
+  animation-delay: 80ms;
+}
+.page-enter > :nth-child(4) {
+  animation-delay: 120ms;
+}
+.page-enter > :nth-child(n + 5) {
+  animation-delay: 160ms;
 }
 
 @keyframes fade {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
 }
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+/* A screen's blocks come in one after another, each lifting a little. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+/* On a phone a sheet slides up from the bottom edge; on a wider screen it's
+   a dialog, which grows in place instead. */
 @keyframes sheet {
   from {
     transform: translateY(100%);
   }
 }
+@keyframes sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (width >= 40rem) {
+  @keyframes sheet {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+  }
+  @keyframes sheet-out {
+    to {
+      opacity: 0;
+      transform: translateY(6px) scale(0.97);
+    }
+  }
+}
+/* Toasts drop in from the top edge, where they sit. */
 @keyframes toast {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.98);
+    transform: translateY(-14px) scale(0.94);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+}
+@keyframes pop {
+  35% {
+    transform: scale(0.84);
+  }
+  70% {
+    transform: scale(1.1);
   }
 }
 /* Every animation moves only transform or opacity, which the GPU does on
@@ -147,7 +224,11 @@
   .btn-primary,
   .btn-danger,
   .btn-ghost {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-medium whitespace-nowrap transition select-none active:opacity-70 disabled:pointer-events-none disabled:opacity-40;
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-medium whitespace-nowrap select-none active:scale-[0.97] active:opacity-85 disabled:pointer-events-none disabled:opacity-40;
+    transition:
+      scale 160ms var(--ease-out),
+      opacity 160ms var(--ease-out),
+      background-color 160ms var(--ease-out);
   }
   .btn {
     @apply border border-line bg-surface text-fg;
@@ -218,7 +299,14 @@
 
 /* Rolling digits */
 .roll-strip {
-  transition: transform 450ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  transition: transform 600ms var(--ease-out);
+}
+
+/* Sliding selection markers: one per segmented control and per sidebar,
+   moved under the chosen option rather than re-drawn on it. */
+.seg-thumb,
+.nav-thumb {
+  transition: transform 340ms var(--ease-out);
 }
 
 /* Equalizer bars */
@@ -274,13 +362,25 @@
   }
 }
 
-/* Screens cross-fade into each other; the tab bar stays put. */
-::view-transition-old(root),
+/* Screens cross-fade into each other; the tab bar stays put. The old
+   screen leaves quickly, so the two are never muddled together for long,
+   and the new one's sections rise in on their own (.page-enter). */
+::view-transition-old(root) {
+  animation: 140ms var(--ease-in) both fade-out;
+}
 ::view-transition-new(root) {
-  animation-duration: 200ms;
+  animation: 260ms var(--ease-out) both fade;
 }
 .vt-tabbar {
   view-transition-name: tabbar;
+}
+/* The tab bar isn't cross-faded with a picture of itself (that ghosts the
+   old tab's highlight); it stays live, so its own moves show instead. */
+::view-transition-old(tabbar) {
+  display: none;
+}
+::view-transition-new(tabbar) {
+  animation: none;
 }
 
 /* History calendar */
@@ -391,9 +491,29 @@
     animation: none;
     transform: scaleY(0.6);
   }
+  .animate-pop,
+  .animate-rise,
+  .page-enter > * {
+    animation: none;
+  }
+  /* Fades stay (they don't move anything), just quicker; sheets and toasts
+     fade instead of sliding. */
   .animate-fade,
   .animate-sheet,
   .animate-toast {
-    animation: none;
+    animation: fade 120ms linear both;
+  }
+  .animate-fade-out,
+  .animate-sheet-out,
+  .animate-toast-out {
+    animation: fade-out 120ms linear both;
+  }
+  .seg-thumb,
+  .nav-thumb,
+  .btn,
+  .btn-primary,
+  .btn-danger,
+  .btn-ghost {
+    transition: none;
   }
 }

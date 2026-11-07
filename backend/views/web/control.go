@@ -40,7 +40,10 @@ type Controller interface {
 	UseSource(id string) error   // "client" or a SteamID
 	MakeDefault(id string) error // a SteamID
 	Logout(id string) error      // a SteamID
-	BeginLogin() (Login, error)  // a QR sign-in
+	BeginLogin() (Login, error)                                                   // a QR sign-in
+	BeginPasswordLogin(ctx context.Context, user, password string) (Login, error) // a sign-in with a password
+	SubmitLoginCode(ctx context.Context, code string) (Login, error)              // the Steam Guard code it asks for
+	CancelLogin()                                                                 // drops a sign-in under way (or its outcome)
 	LoginState() Login
 
 	SetNotify(url string) error // "" turns alerts off
@@ -95,11 +98,16 @@ type AccountInfo struct {
 	Damaged bool      `json:"damaged,omitempty"`
 }
 
-// Login is a QR sign-in in progress (or its outcome).
+// Login is a sign-in in progress (or its outcome): a QR code the Steam app
+// scans, or an account name and password and then Steam Guard.
 type Login struct {
-	State   string `json:"state"` // "", "waiting", "done", "failed"
+	State   string `json:"state"`            // "", "waiting", "done", "failed"
+	Method  string `json:"method,omitempty"` // "qr" or "password"
 	URL     string `json:"url,omitempty"`
-	QR      string `json:"qr,omitempty"` // SVG of URL
+	QR      string `json:"qr,omitempty"`      // SVG of URL
+	Code    string `json:"code,omitempty"`    // password: Steam Guard wants a code from "app" or "email"
+	Approve string `json:"approve,omitempty"` // password: it can be approved instead, in the "app" or from an "email"
+	Hint    string `json:"hint,omitempty"`    // where Steam emailed the code (its hint, e.g. the domain)
 	Account string `json:"account,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
@@ -483,6 +491,35 @@ func (s *Server) controlRoutes(mux *http.ServeMux) {
 		return c.BeginLogin()
 	})
 	get("/api/login", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		return c.LoginState(), nil
+	})
+	post("/api/login/password", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req struct {
+			User     string `json:"user"`
+			Password string `json:"password"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(req.User) == "" || req.Password == "" {
+			return nil, badRequest("enter the account name and password")
+		}
+		return c.BeginPasswordLogin(r.Context(), req.User, req.Password)
+	})
+	post("/api/login/code", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req struct {
+			Code string `json:"code"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(req.Code) == "" {
+			return nil, badRequest("enter the Steam Guard code")
+		}
+		return c.SubmitLoginCode(r.Context(), req.Code)
+	})
+	post("/api/login/cancel", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		c.CancelLogin()
 		return c.LoginState(), nil
 	})
 	post("/api/notify", func(w http.ResponseWriter, r *http.Request) (any, error) {

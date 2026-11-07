@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -75,20 +75,20 @@ interface PageProps {
 
 export function Page({ title, back, onBack, action, children, wide }: PageProps) {
   return (
-    <div className={`animate-fade mx-auto w-full ${wide ? "lg:max-w-2xl xl:max-w-none" : "lg:max-w-2xl"}`}>
+    <div className={`mx-auto w-full ${wide ? "lg:max-w-2xl xl:max-w-none" : "lg:max-w-2xl"}`}>
       {back && (
-        <button type="button" onClick={onBack} className="-ml-1 mb-1 inline-flex h-8 items-center gap-0.5 pr-2 text-[15px] text-accent">
+        <button type="button" onClick={onBack} className="animate-rise -ml-1 mb-1 inline-flex h-8 items-center gap-0.5 pr-2 text-[15px] text-accent">
           <Icon name="back" className="size-5" strokeWidth={2.2} />
           {back}
         </button>
       )}
       {title && (
-        <div className="mb-5 flex items-end justify-between gap-3">
+        <div className="animate-rise mb-5 flex items-end justify-between gap-3">
           <h1 className="text-[28px] leading-tight font-bold tracking-[-0.02em] lg:text-[32px]">{title}</h1>
           {action}
         </div>
       )}
-      <div className="space-y-7">{children}</div>
+      <div className="page-enter space-y-7">{children}</div>
     </div>
   );
 }
@@ -342,8 +342,17 @@ interface SegmentedProps<T> {
 }
 
 export function Segmented<T extends string | number>({ options, value, onChange, label }: SegmentedProps<T>) {
+  const picked = options.findIndex((o) => o.value === value);
   return (
-    <div role="tablist" aria-label={label} className="flex w-full rounded-[10px] bg-fill p-0.5">
+    <div role="tablist" aria-label={label} className="relative flex w-full rounded-[10px] bg-fill p-0.5">
+      {/* One raised pill that slides to the chosen option. */}
+      {picked >= 0 && (
+        <span
+          aria-hidden="true"
+          className="seg-thumb absolute inset-y-0.5 left-0.5 rounded-lg bg-surface shadow-[0_1px_3px_rgb(0_0_0/0.12)] dark:bg-[#3a3a3e]"
+          style={{ width: `calc((100% - 4px) / ${options.length})`, transform: `translateX(${picked * 100}%)` }}
+        />
+      )}
       {options.map((o) => {
         const on = value === o.value;
         return (
@@ -353,7 +362,7 @@ export function Segmented<T extends string | number>({ options, value, onChange,
             type="button"
             aria-selected={on}
             onClick={() => onChange(o.value)}
-            className={`h-8 min-w-0 flex-1 truncate rounded-lg px-2 text-[13px] font-medium transition ${on ? "bg-surface shadow-[0_1px_3px_rgb(0_0_0/0.12)] dark:bg-[#3a3a3e]" : "sub"}`}
+            className={`relative h-8 min-w-0 flex-1 truncate rounded-lg px-2 text-[13px] font-medium transition-colors duration-200 ${on ? "text-fg" : "sub"}`}
           >
             {o.label}
             {o.count != null && <span className="faint num ml-1">{o.count}</span>}
@@ -383,7 +392,23 @@ interface SheetProps {
   children?: ReactNode;
 }
 
+// How long a sheet takes to go away. Match animate-sheet-out in index.css.
+const SHEET_LEAVE_MS = 240;
+
 export function Sheet({ open, onClose, title, children }: SheetProps) {
+  // A closed sheet stays up while it slides away, still showing what it
+  // showed (the screen may already have dropped what it was about).
+  const [shown, setShown] = useState(open);
+  const kept = useRef({ title, children });
+  if (open) kept.current = { title, children };
+  if (open && !shown) setShown(true);
+  const leaving = shown && !open;
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setShown(false), SHEET_LEAVE_MS);
+    return () => clearTimeout(t);
+  }, [leaving]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -395,19 +420,20 @@ export function Sheet({ open, onClose, title, children }: SheetProps) {
       document.body.style.overflow = overflow;
     };
   }, [open, onClose]);
-  if (!open) return null;
+  if (!shown) return null;
+  const view = open ? { title, children } : kept.current;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-      <div className="animate-fade absolute inset-0 bg-black/40" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label={title} className="animate-sheet relative max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-surface px-5 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-3xl sm:pt-5">
+    <div className={`fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6 ${leaving ? "pointer-events-none" : ""}`}>
+      <div className={`${leaving ? "animate-fade-out" : "animate-fade"} absolute inset-0 bg-black/40`} onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={view.title} className={`${leaving ? "animate-sheet-out" : "animate-sheet"} relative max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-surface px-5 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-3xl sm:pt-5`}>
         <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-line sm:hidden" />
         <div className="mb-4 flex items-start justify-between gap-3">
-          <h2 className="text-[19px] font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-[19px] font-semibold tracking-tight">{view.title}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="-mt-0.5 -mr-1.5 grid size-8 place-items-center rounded-full bg-fill text-sub">
             <Icon name="x" className="size-4" strokeWidth={2.4} />
           </button>
         </div>
-        {children}
+        {view.children}
       </div>
     </div>,
     document.body,
