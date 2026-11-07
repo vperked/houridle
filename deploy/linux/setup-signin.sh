@@ -6,7 +6,8 @@
 #   bash deploy/linux/setup-signin.sh [path/to/houridle]
 #
 # As a normal user it adds user services (and keeps them running after you
-# log out); as root it adds system services.
+# log out); as root it adds system services. Running it again only changes
+# what differs: an unchanged program or service file is left as it is.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -44,16 +45,23 @@ main() {
 
   say "Installing houridle to $install_dir"
   mkdir -p "$install_dir"
-  if [ "$(realpath "$binary")" != "$(realpath -m "$install_dir/houridle")" ]; then
+  # install replaces the file rather than writing into it, so a running
+  # houridle carries on with the old one until it restarts.
+  if ! cmp -s "$binary" "$install_dir/houridle"; then
     install -m 755 "$binary" "$install_dir/houridle"
   fi
 
   say "Adding the services to $unit_dir"
   mkdir -p "$unit_dir"
+  local unit new
   for unit in houridle-signin.service houridle-signin@.service; do
-    sed -e "s|INSTALL_DIR|$install_dir|g" -e "s|TARGET|$target|g" "$here/systemd/$unit" >"$unit_dir/$unit"
+    new="$(sed -e "s|INSTALL_DIR|$install_dir|g" -e "s|TARGET|$target|g" "$here/systemd/$unit")"
+    if [ "$new" != "$(cat "$unit_dir/$unit" 2>/dev/null)" ]; then
+      printf '%s
+' "$new" >"$unit_dir/$unit"
+    fi
   done
-  if [ "$(id -u)" -ne 0 ]; then
+  if [ "$(id -u)" -ne 0 ] && [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" != yes ]; then
     say "Letting your services keep running when you log out"
     sudo loginctl enable-linger "$USER" || say "Couldn't enable lingering; services stop when you log out"
   fi

@@ -104,8 +104,10 @@ install_services() {
   install_unit houridle.service <"$here/systemd/houridle.service"
   install_unit houridle-steam.service < <(sed "s|STEAM_PATH|$steam|" "$here/systemd/houridle-steam.service")
 
-  say "Letting your services keep running when you log out"
-  sudo loginctl enable-linger "$USER"
+  if [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" != yes ]; then
+    say "Letting your services keep running when you log out"
+    sudo loginctl enable-linger "$USER"
+  fi
 
   systemctl --user daemon-reload
   systemctl --user enable --now houridle-display.service houridle-steam.service

@@ -4,7 +4,9 @@ cd /d "%~dp0"
 set failed=
 where npm >nul 2>nul || (echo Building needs Node.js for the control panel page: https://nodejs.org & set failed=1 & goto done)
 pushd frontend
-if not exist node_modules call npm ci --no-audit --no-fund || set failed=1
+rem Install the page's packages again only when package-lock.json changed
+rem since the last time (a copy in node_modules marks it).
+fc /b package-lock.json node_modules\.houridle-lock >nul 2>nul || (call npm ci --prefer-offline --no-audit --no-fund && copy /y package-lock.json node_modules\.houridle-lock >nul) || set failed=1
 if not defined failed call npm run build || set failed=1
 popd
 if defined failed goto done

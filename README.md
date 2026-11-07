@@ -21,6 +21,8 @@ cd houridle
 
 That builds houridle (or downloads the latest release if Go isn't installed), installs it to `~/houridle` with a service that starts it at boot, starts it, and prints the control panel's link. Open the link on your phone, sign in with the Steam app (**More → Accounts**), and pick what to idle (**Idle**). That's it: it carries on after a reboot and keeps itself up to date. Options: `--port 8095` (the default is 8080), `--no-start`, or `--no-service` to install the program only.
 
+To update, `git pull` and run `./install.sh` again. It finds the houridle that's there (wherever it was installed, and whichever service runs it), changes only what differs, and restarts houridle only if something did; your settings, sign-ins and history stay. If houridle has already updated itself past the version you're installing, it keeps that one (`--force` installs yours anyway).
+
 **On a Windows PC:** download `houridle.exe` from the [releases](https://github.com/vperked/houridle/releases) (or build it, below), open Steam, and run it. For the phone control panel, run `houridle serve` instead.
 
 ## Building it yourself
