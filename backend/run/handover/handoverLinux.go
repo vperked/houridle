@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"houridle/backend/run/userdir"
 )
 
 // TraySupported reports whether this OS has a system tray for houridle.
@@ -29,7 +31,7 @@ func LockPath(key string) (string, error) {
 			return filepath.Join(run, name), nil
 		}
 	}
-	cache, err := os.UserCacheDir()
+	cache, err := userdir.Cache()
 	if err != nil {
 		return "", fmt.Errorf("can't find a folder for houridle's lock: %w", err)
 	}

@@ -229,7 +229,6 @@ func newFakeCommunity(t *testing.T) *fakeCommunity {
 		p := r.URL.Path
 		switch {
 		case p == fmt.Sprintf("/inventory/%d/753/6", alice):
-			type asset struct{ Assetid, Classid, Instanceid, Amount string }
 			var assets []map[string]string
 			for _, a := range f.cards {
 				class := "bye"

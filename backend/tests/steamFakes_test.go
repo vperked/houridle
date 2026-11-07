@@ -192,9 +192,8 @@ type fakeCM struct {
 	bought       map[uint32]fakePurchase
 	stickerReady bool // a sale-event sticker can be claimed
 
-	family   []fakeGame // games the account's Steam family shares with it (nil: no family)
-	cart     []uint32   // package IDs in the store cart, by line (line ID = index+1)
-	nextLine uint64
+	family []fakeGame // games the account's Steam family shares with it (nil: no family)
+	cart   []uint32   // package IDs in the store cart, by line (line ID = index+1)
 }
 
 // licenseList is a CMsgClientLicenseList body for the account's packages.

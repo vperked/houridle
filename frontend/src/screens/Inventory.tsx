@@ -117,8 +117,12 @@ function Cards() {
                     {g.spare > 0 && ` · ${g.spare} spare${g.gems ? ` = ${g.spare * g.gems} gems` : ""}`}
                   </span>
                 </span>
-                <span className="num text-[14px]">{g.value ? `~${money(g.value)}` : ""}</span>
-                {can && <Checkbox checked={on} onChange={() => setPicked((p) => (on ? p.filter((x) => x !== g.appId) : [...p, g.appId]))} label={`Turn ${g.name}'s spare cards into gems`} />}
+                <span className="num shrink-0 text-[14px]">{g.value ? `~${money(g.value)}` : ""}</span>
+                {can ? (
+                  <Checkbox checked={on} onChange={() => setPicked((p) => (on ? p.filter((x) => x !== g.appId) : [...p, g.appId]))} label={`Turn ${g.name}'s spare cards into gems`} />
+                ) : (
+                  spareGames.length > 0 && <span className="w-[22px] shrink-0" aria-hidden="true" /> // keeps the prices in line with the rows that have one
+                )}
               </Tag>
             );
           })

@@ -125,6 +125,7 @@ func TestStoreRejectsDamagedFile(t *testing.T) {
 
 func TestSessionNeverPrintsItsToken(t *testing.T) {
 	s := aliceSession()
+	//lint:ignore S1025 every way of printing it is the point
 	for _, out := range []string{fmt.Sprint(s), fmt.Sprintf("%v", s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s), fmt.Sprintf("%s", s)} {
 		if strings.Contains(out, s.RefreshToken) || strings.Contains(out, "eyJ") {
 			t.Errorf("session printed its token: %s", out)
@@ -272,6 +273,7 @@ func TestPasswordLoginSealsThePasswordAndSurfacesGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	//lint:ignore SA1019 checks what Steam receives, which is PKCS #1 v1.5 (see BeginPassword)
 	plain, err := rsa.DecryptPKCS1v15(nil, key, sealed)
 	if err != nil || string(plain) != password {
 		t.Errorf("sealed password doesn't decrypt to the password: %v", err)

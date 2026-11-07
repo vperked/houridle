@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"houridle/backend/run/userdir"
 )
 
 // Errors the commands turn into advice.
@@ -56,9 +58,9 @@ type file struct {
 type Store struct{ Path string }
 
 // DefaultStore is the per-user file in the OS config folder (%AppData% on
-// Windows, ~/.config on Linux).
+// Windows, ~/.config on Linux, also for a service started without $HOME).
 func DefaultStore() (*Store, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := userdir.Config()
 	if err != nil {
 		return nil, fmt.Errorf("can't find a place to keep your sign-in: %w", err)
 	}

@@ -94,7 +94,7 @@ function GameList({ source, onPick, drips }: { source: string; onPick: (game: Ga
             <Empty icon="search">No games match.</Empty>
           ) : (
             <>
-              <ul ref={p.ref} className="rows max-h-[36rem] overflow-y-auto overscroll-contain">
+              <ul ref={p.ref} className="rows">
                 {p.items.map((g) => (
                   <li key={g.appId}>
                     {selecting ? (

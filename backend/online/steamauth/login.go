@@ -149,6 +149,9 @@ func (c *Client) BeginPassword(ctx context.Context, account, password, deviceNam
 		return nil, errors.New("Steam sent an unusable password key (is the account name right?)")
 	}
 	pub := &rsa.PublicKey{N: mod, E: int(exp.Int64())}
+	// Steam's sign-in only takes PKCS #1 v1.5 (its own clients and web page
+	// send that), so the newer OAEP padding isn't an option here.
+	//lint:ignore SA1019 Steam's protocol requires PKCS #1 v1.5
 	sealed, err := rsa.EncryptPKCS1v15(rand.Reader, pub, []byte(password))
 	if err != nil {
 		return nil, fmt.Errorf("couldn't protect the password: %w", err)

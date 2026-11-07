@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -117,9 +117,6 @@ export function Group({ title, action, footer, children, flush }: GroupProps) {
   );
 }
 
-// Row is one line in a Group: an optional leading icon or picture, a title
-// and detail, and something trailing. With onClick it's a button with a
-// chevron.
 // Quiet colors for section icons.
 export type Tint = "green" | "amber" | "violet" | "sky" | "pink" | "indigo" | "red" | "teal";
 
@@ -134,6 +131,9 @@ const TINTS: Record<Tint, string> = {
   teal: "bg-teal-500/15 text-teal-500",
 };
 
+// Row is one line in a Group: an optional leading icon or picture, a title
+// and detail, and something trailing. With onClick it's a button with a
+// chevron.
 interface RowProps {
   icon?: IconName;
   lead?: ReactNode;
@@ -173,7 +173,6 @@ export function Row({ icon, lead, title, detail, trailing, onClick, chevron = !!
   );
 }
 
-// Stat is a number with a label, for rows of figures.
 // Fill is a progress bar's filled part. It slides in with a transform, so
 // a change animates on the GPU (changing width would re-lay out the page on
 // every frame). Its track needs overflow-hidden and rounded ends.
@@ -257,6 +256,7 @@ export function Loading() {
   );
 }
 
+// Stat is a number with a label, for rows of figures.
 export function Stat({ value, label }: { value: ReactNode; label: ReactNode }) {
   return (
     <div className="min-w-0 flex-1 px-3 py-3 text-center">
@@ -271,16 +271,21 @@ export function Stats({ children }: { children: ReactNode }) {
   return <div className="flex divide-x divide-line">{children}</div>;
 }
 
+// Empty stands in for a list with nothing in it: an icon, a line about
+// why, and maybe a way forward.
 export function Empty({ icon = "info", children, action }: { icon?: IconName; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center px-6 py-8 text-center">
-      <Icon name={icon} className="faint size-7" strokeWidth={1.5} />
-      <p className="sub mt-2 max-w-xs text-[14px]">{children}</p>
+    <div className="flex flex-col items-center px-6 py-9 text-center">
+      <span className="grid size-12 place-items-center rounded-full bg-fill">
+        <Icon name={icon} className="sub size-6" strokeWidth={1.7} />
+      </span>
+      <p className="sub mt-3 max-w-xs text-[14px] leading-relaxed">{children}</p>
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
 
+// Badge is a small label for a state (In use, Queued, Done...).
 export type BadgeTone = "good" | "bad" | "warn" | "accent";
 
 export function Badge({ tone, children }: { tone?: BadgeTone; children: ReactNode }) {
@@ -288,6 +293,7 @@ export function Badge({ tone, children }: { tone?: BadgeTone; children: ReactNod
   return <span className={`inline-flex h-5 shrink-0 items-center rounded-md px-1.5 text-[11px] font-semibold ${tone ? tones[tone] : "bg-fill text-sub"}`}>{children}</span>;
 }
 
+// Dot is a status light: green and pulsing while live, grey otherwise.
 export function Dot({ live }: { live: boolean }) {
   return (
     <span className="relative flex size-2">
@@ -342,15 +348,48 @@ interface SegmentedProps<T> {
 }
 
 export function Segmented<T extends string | number>({ options, value, onChange, label }: SegmentedProps<T>) {
+  const bar = useRef<HTMLDivElement>(null);
+  const [thumb, setThumb] = useState<{ x: number; w: number; moved: boolean } | null>(null);
+  const [more, setMore] = useState(""); // which sides have more to scroll to: "", "l", "r" or "lr"
+  const edges = () => {
+    const el = bar.current;
+    if (!el) return;
+    const l = el.scrollLeft > 1 ? "l" : "";
+    const r = el.scrollLeft + el.clientWidth < el.scrollWidth - 1 ? "r" : "";
+    setMore(l + r);
+  };
   const picked = options.findIndex((o) => o.value === value);
+
+  // One raised pill slides to the chosen option. It's measured rather than
+  // worked out, so options can be as wide as their labels: they share the
+  // width when there's room, and the bar scrolls sideways when there isn't
+  // (instead of cutting labels short).
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    const chosen = () => el.querySelector<HTMLElement>('[aria-selected="true"]');
+    const place = () => {
+      const b = chosen();
+      setThumb((t) => (b ? { x: b.offsetLeft, w: b.offsetWidth, moved: t !== null } : null));
+      edges();
+    };
+    place();
+    const b = chosen();
+    if (b && el.scrollWidth > el.clientWidth) el.scrollLeft = b.offsetLeft - (el.clientWidth - b.offsetWidth) / 2;
+    edges();
+    const watch = new ResizeObserver(place);
+    watch.observe(el);
+    for (const child of el.querySelectorAll("[role=tab]")) watch.observe(child);
+    return () => watch.disconnect();
+  }, [picked, options.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <div role="tablist" aria-label={label} className="relative flex w-full rounded-[10px] bg-fill p-0.5">
-      {/* One raised pill that slides to the chosen option. */}
-      {picked >= 0 && (
+    <div ref={bar} role="tablist" aria-label={label} onScroll={edges} className={`no-scrollbar relative flex w-full overflow-x-auto rounded-[10px] bg-fill p-0.5 ${more ? `fade-${more}` : ""}`}>
+      {thumb && (
         <span
           aria-hidden="true"
-          className="seg-thumb absolute inset-y-0.5 left-0.5 rounded-lg bg-surface shadow-[0_1px_3px_rgb(0_0_0/0.12)] dark:bg-[#3a3a3e]"
-          style={{ width: `calc((100% - 4px) / ${options.length})`, transform: `translateX(${picked * 100}%)` }}
+          className="seg-thumb absolute top-0.5 bottom-0.5 left-0 rounded-lg bg-raised shadow-[0_1px_3px_rgb(0_0_0/0.12),0_0_0_0.5px_rgb(0_0_0/0.04)]"
+          style={{ width: thumb.w, transform: `translateX(${thumb.x}px)`, transition: thumb.moved ? undefined : "none" }}
         />
       )}
       {options.map((o) => {
@@ -362,10 +401,10 @@ export function Segmented<T extends string | number>({ options, value, onChange,
             type="button"
             aria-selected={on}
             onClick={() => onChange(o.value)}
-            className={`relative h-8 min-w-0 flex-1 truncate rounded-lg px-2 text-[13px] font-medium transition-colors duration-200 ${on ? "text-fg" : "sub"}`}
+            className={`relative h-8 flex-1 rounded-lg px-3 text-[13px] font-medium whitespace-nowrap transition-colors duration-200 ${on ? "text-fg" : "sub hover:text-fg"}`}
           >
             {o.label}
-            {o.count != null && <span className="faint num ml-1">{o.count}</span>}
+            {o.count != null && <span className={`num ml-1 ${on ? "sub" : "faint"}`}>{o.count}</span>}
           </button>
         );
       })}
